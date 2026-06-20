@@ -606,6 +606,17 @@ app.put('/api/definir-mot-de-passe', requireAuth, async (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Route : Devis ────────────────────────────────────────────────────────────
+app.post('/api/devis', async (req, res) => {
+  const { nom, email, message } = req.body;
+  res.json({ success: true });
+
+  await discordLog('info',
+    `📋 Nouvelle demande de devis — ${nom || 'Inconnu'} <${email || '?'}>`,
+    { user: email || 'N/A', extra: message ? message.slice(0, 800) : '' }
+  );
+});
+
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {

@@ -2018,33 +2018,25 @@ document.getElementById('devis-send-btn').addEventListener('click', async e => {
   const sections = collectDevisData();
   const meta = { dateEnvoi: new Date().toLocaleString('fr-FR') };
 
-  // Envoi par email via Formspree
-  // Envoi par email via Formspree, directement vers zrevents06@gmail.com
-  // ⚠️ Lors du PREMIER devis envoyé depuis le site, Formspree enverra un email
-  // "Confirm form submission" à zrevents06@gmail.com : il faut cliquer sur le lien
-  // de confirmation dans cet email pour activer définitivement l'envoi (gratuit, une seule fois).
-  const FORMSPREE_URL = 'https://formspree.io/f/zrevents06@gmail.com';
-
-  const nomField = sections.flatMap(s => s.champs).find(f => f.label.toLowerCase().includes('nom prénom'));
+  const nomField   = sections.flatMap(s => s.champs).find(f => f.label.toLowerCase().includes('nom prénom'));
   const emailField = sections.flatMap(s => s.champs).find(f => f.label.toLowerCase().includes('e-mail'));
 
   const payload = {
-    _subject: 'Nouvelle demande de devis — ' + (nomField ? nomField.valeur : ''),
-    nom: nomField ? nomField.valeur : '',
-    email: emailField ? emailField.valeur : '',
+    nom:     nomField   ? nomField.valeur   : '',
+    email:   emailField ? emailField.valeur : '',
     message: devisDataToText(sections, meta)
   };
 
   btn.textContent = 'Envoi en cours…';
 
   try {
-    await fetch(FORMSPREE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
-      body: JSON.stringify(payload)
+    await fetch('/api/devis', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload)
     });
   } catch(err) {
-    console.error('Erreur envoi Formspree:', err);
+    console.error('Erreur envoi devis:', err);
   }
 
   launchConfetti(e.clientX, e.clientY);
