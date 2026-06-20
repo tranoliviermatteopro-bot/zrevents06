@@ -663,8 +663,8 @@ app.post('/api/devis', async (req, res) => {
               {
                 name: '⚡  Actions rapides',
                 value: [
-                  `✅  [**Valider ce devis**](https://zrevents06.onrender.com/admin/devis/valider?email=${encodeURIComponent(email || '')})`,
-                  `❌  [**Refuser ce devis**](https://zrevents06.onrender.com/admin/devis/refuser?email=${encodeURIComponent(email || '')})`,
+                  `✅  [**Valider ce devis**](https://zrevents06.onrender.com/admin/devis/valider?email=${encodeURIComponent(email || '')}&nom=${encodeURIComponent(nom || '')})`,
+                  `❌  [**Refuser ce devis**](https://zrevents06.onrender.com/admin/devis/refuser?email=${encodeURIComponent(email || '')}&nom=${encodeURIComponent(nom || '')})`,
                 ].join('\n'),
                 inline: false,
               },
@@ -673,6 +673,96 @@ app.post('/api/devis', async (req, res) => {
             footer: {
               text: 'zrevents06.onrender.com  •  Devis en attente de traitement',
             },
+            timestamp: new Date().toISOString(),
+          }],
+        }),
+      });
+    } catch {}
+  }
+});
+
+// ─── Routes admin : Valider / Refuser un devis ───────────────────────────────
+function adminDevisPage(action, email, nom) {
+  const isValide = action === 'valider';
+  const couleur  = isValide ? '#2ecc71' : '#e74c3c';
+  const emoji    = isValide ? '✅' : '❌';
+  const titre    = isValide ? 'Devis validé' : 'Devis refusé';
+  const texte    = isValide
+    ? `Le devis de <strong>${nom || email}</strong> (<em>${email}</em>) a été <strong>validé</strong>. Penser à contacter le client.`
+    : `Le devis de <strong>${nom || email}</strong> (<em>${email}</em>) a été <strong>refusé</strong>.`;
+  return `<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+  <title>${titre} — zrevents06</title>
+  <style>
+    body { margin:0; font-family:'Segoe UI',sans-serif; background:#1a1a1a; display:flex; align-items:center; justify-content:center; min-height:100vh; }
+    .card { background:#242424; border-radius:16px; padding:48px 56px; text-align:center; box-shadow:0 8px 32px rgba(0,0,0,.4); max-width:460px; }
+    .emoji { font-size:64px; margin-bottom:16px; }
+    h1 { color:${couleur}; margin:0 0 12px; font-size:1.8rem; }
+    p { color:#ccc; line-height:1.6; margin:0 0 28px; }
+    a { display:inline-block; padding:12px 28px; background:${couleur}; color:#fff; border-radius:8px; text-decoration:none; font-weight:600; }
+    a:hover { opacity:.85; }
+  </style>
+</head><body>
+  <div class="card">
+    <div class="emoji">${emoji}</div>
+    <h1>${titre}</h1>
+    <p>${texte}</p>
+    <a href="https://zrevents06.onrender.com">Retour au site</a>
+  </div>
+</body></html>`;
+}
+
+app.get('/admin/devis/valider', async (req, res) => {
+  const email = req.query.email || '(inconnu)';
+  const nom   = req.query.nom   || 'Client';
+  res.send(adminDevisPage('valider', email, nom));
+
+  const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+  if (wh) {
+    try {
+      await fetch(wh, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [{
+            author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+            title: '✅  Devis validé',
+            description: '> Le devis a été **accepté**. Penser à contacter le client ! 📞',
+            color: 0x2ecc71,
+            fields: [
+              { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
+              { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
+            ],
+            footer: { text: 'zrevents06.onrender.com  •  Devis validé' },
+            timestamp: new Date().toISOString(),
+          }],
+        }),
+      });
+    } catch {}
+  }
+});
+
+app.get('/admin/devis/refuser', async (req, res) => {
+  const email = req.query.email || '(inconnu)';
+  const nom   = req.query.nom   || 'Client';
+  res.send(adminDevisPage('refuser', email, nom));
+
+  const wh = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
+  if (wh) {
+    try {
+      await fetch(wh, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          embeds: [{
+            author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+            title: '❌  Devis refusé',
+            description: '> Le devis a été **refusé**.',
+            color: 0xe74c3c,
+            fields: [
+              { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
+              { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
+            ],
+            footer: { text: 'zrevents06.onrender.com  •  Devis refusé' },
             timestamp: new Date().toISOString(),
           }],
         }),
