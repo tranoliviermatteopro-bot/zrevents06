@@ -612,18 +612,25 @@ app.post('/api/devis', async (req, res) => {
   const { nom, email, message } = req.body;
   res.json({ success: true });
 
-  // Notif Discord via l'endpoint /devis du bot (→ canal devis-en-attente)
-  if (DISCORD_API_KEY) {
+  // Notif Discord via webhook direct (→ canal devis-en-attente)
+  const webhookUrl = process.env.DISCORD_WEBHOOK_DEVIS;
+  if (webhookUrl) {
     try {
-      await fetch(`${DISCORD_BOT_URL}/devis`, {
+      await fetch(webhookUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-api-key': DISCORD_API_KEY },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          status: 'en-attente',
-          site: 'zrevents06',
-          client: nom || 'Inconnu',
-          email: email || '?',
-          description: message ? message.slice(0, 800) : '',
+          embeds: [{
+            title: '🍰 Nouvelle demande de devis reçue',
+            color: 0xf59e0b,
+            fields: [
+              { name: '👤 Client', value: nom || 'Inconnu', inline: true },
+              { name: '📧 Email', value: email || '?', inline: true },
+              { name: '📝 Message', value: message ? message.slice(0, 1024) : '_(aucun)_', inline: false },
+            ],
+            footer: { text: 'zrevents06 — pâtisserie & événements' },
+            timestamp: new Date().toISOString(),
+          }],
         }),
       });
     } catch {}
