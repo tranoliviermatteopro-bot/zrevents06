@@ -26,6 +26,8 @@ const crypto       = require('crypto');
 const path         = require('path');
 const fs           = require('fs');
 const initSqlJs    = require('sql.js');
+const passport     = require('passport');
+const GoogleStrategy = require('passport-google-oauth20').Strategy;
 
 const DB_PATH = path.join(__dirname, 'data.db');
 
@@ -149,6 +151,56 @@ function requireAuth(req, res, next) {
     res.clearCookie('auth_token');
     res.status(401).json({ error: 'Session expiree.' });
   }
+}
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
+  app.use(passport.initialize());
+
+  passport.use(new GoogleStrategy({
+    clientID:     process.env.GOOGLE_CLIENT_ID,
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+    callbackURL:  `${BASE_URL}/auth/google/callback`,
+  }, (accessToken, refreshToken, profile, done) => {
+    try {
+      const email    = profile.emails?.[0]?.value || '';
+      const prenom   = profile.name?.givenName || profile.displayName || 'Utilisateur';
+      const nom      = profile.name?.familyName || '';
+      const googleId = profile.id;
+
+      let user = db.get('SELECT * FROM users WHERE google_id = ?', googleId);
+      if (!user && email) user = db.get('SELECT * FROM users WHERE email = ?', email.toLowerCase());
+
+      if (!user) {
+        db.run(
+          'INSERT INTO users (prenom, nom, email, google_id, email_verifie, password_hash) VALUES (?, ?, ?, ?, 1, ?)',
+          prenom, nom, email.toLowerCase(), googleId, ''
+        );
+        user = db.get('SELECT * FROM users WHERE google_id = ?', googleId);
+      } else if (!user.google_id) {
+        db.run('UPDATE users SET google_id = ?, email_verifie = 1 WHERE id = ?', googleId, user.id);
+        user = db.get('SELECT * FROM users WHERE id = ?', user.id);
+      }
+
+      return done(null, user);
+    } catch (err) {
+      return done(err);
+    }
+  }));
+
+  app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+
+  app.get('/auth/google/callback', (req, res, next) => {
+    passport.authenticate('google', { session: false }, (err, user) => {
+      if (err || !user) {
+        console.error('[google-oauth] Erreur:', err?.message);
+        return res.redirect('/connexion.html?error=google');
+      }
+      setAuthCookie(res, user, false);
+      discordLog('info', 'Connexion Google : ' + user.email, { user: user.email });
+      res.redirect('/espace-membre.html');
+    })(req, res, next);
+  });
 }
 
 // ─── Route : Inscription ──────────────────────────────────────────────────────
@@ -416,7 +468,8 @@ initSqlJs().then(SQL => {
       prenom        TEXT     NOT NULL,
       nom           TEXT     NOT NULL,
       email         TEXT     UNIQUE NOT NULL,
-      password_hash TEXT     NOT NULL,
+      password_hash TEXT     DEFAULT '',
+      google_id     TEXT     UNIQUE,
       email_verifie INTEGER  DEFAULT 0,
       email_token   TEXT,
       created_at    TEXT     DEFAULT (datetime('now'))
