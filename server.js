@@ -1,4 +1,5 @@
 require('dotenv').config();
+const helmet = require('helmet');
 
 // ─── Discord Log ──────────────────────────────────────────────────────────────
 const DISCORD_BOT_URL = process.env.DISCORD_BOT_URL || 'http://localhost:3001';
@@ -28,6 +29,7 @@ const fs           = require('fs');
 const initSqlJs    = require('sql.js');
 const passport     = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
+const expressSession = require('express-session');
 
 const DB_PATH = path.join(__dirname, 'data.db');
 
@@ -81,9 +83,48 @@ const db = {
 
 // ─── Application Express ──────────────────────────────────────────────────────
 const app = express();
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+// ─── Sécurité : headers HTTP ──────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc:  ["'self'"],
+      scriptSrc:   ["'self'", "'unsafe-inline'"],   // inline scripts dans les HTML
+      styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
+      imgSrc:      ["'self'", 'data:', 'https:'],
+      connectSrc:  ["'self'"],
+      frameSrc:    ["'none'"],
+      objectSrc:   ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // évite de casser les ressources Google Fonts
+}));
+
+// ─── Rate limiter global (anti-scraping / DDoS) ───────────────────────────────
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Trop de requêtes. Réessayez dans 15 minutes.' },
+});
+app.use(globalLimiter);
+
+app.use(express.json({ limit: '10kb' }));
+app.use(express.urlencoded({ extended: true, limit: '10kb' }));
 app.use(cookieParser());
+app.use(expressSession({
+  secret: process.env.SESSION_SECRET || process.env.JWT_SECRET || 'oauth-state-secret',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure:   process.env.NODE_ENV === 'production',
+    httpOnly: true,
+    sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
+    maxAge:   10 * 60 * 1000,
+  },
+}));
 
 // Middleware logs Discord (erreurs HTTP)
 app.use((req, res, next) => {
@@ -188,7 +229,7 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     }
   }));
 
-  app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+  app.get('/auth/google', passport.authenticate('google', { scope: ['profile', 'email'] }));
 
   app.get('/auth/google/callback', (req, res, next) => {
     passport.authenticate('google', { session: false }, (err, user) => {
@@ -209,6 +250,15 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
 
   if (!prenom?.trim() || !nom?.trim() || !email?.trim() || !password) {
     return res.status(400).json({ error: 'Tous les champs sont requis.' });
+  }
+  if (prenom.trim().length > 50 || nom.trim().length > 50) {
+    return res.status(400).json({ error: 'Prénom et nom limités à 50 caractères.' });
+  }
+  if (email.length > 254) {
+    return res.status(400).json({ error: 'Adresse e-mail trop longue.' });
+  }
+  if (password.length > 128) {
+    return res.status(400).json({ error: 'Mot de passe trop long (max 128 caractères).' });
   }
   if (!EMAIL_RE.test(email)) {
     return res.status(400).json({ error: 'Adresse e-mail invalide.' });
@@ -454,6 +504,14 @@ function emailResetHtml(prenom, url) {
 </td></tr></table>
 </body></html>`;
 }
+
+// ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  console.error('[error]', err.message);
+  discordLog('error', 'Erreur serveur non gérée', { message: err.message, url: req.originalUrl });
+  res.status(500).json({ error: 'Une erreur interne est survenue.' });
+});
 
 // ─── Demarrage : init DB puis ecoute ──────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
