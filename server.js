@@ -612,10 +612,22 @@ app.post('/api/devis', async (req, res) => {
   const { nom, email, message } = req.body;
   res.json({ success: true });
 
-  await discordLog('info',
-    `📋 Nouvelle demande de devis — ${nom || 'Inconnu'} <${email || '?'}>`,
-    { user: email || 'N/A', extra: message ? message.slice(0, 800) : '' }
-  );
+  // Notif Discord via l'endpoint /devis du bot (→ canal devis-en-attente)
+  if (DISCORD_API_KEY) {
+    try {
+      await fetch(`${DISCORD_BOT_URL}/devis`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': DISCORD_API_KEY },
+        body: JSON.stringify({
+          status: 'en-attente',
+          site: 'zrevents06',
+          client: nom || 'Inconnu',
+          email: email || '?',
+          description: message ? message.slice(0, 800) : '',
+        }),
+      });
+    } catch {}
+  }
 });
 
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
