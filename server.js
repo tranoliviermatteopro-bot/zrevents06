@@ -362,6 +362,18 @@ app.get('/api/me', requireAuth, (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, prenom: req.user.prenom });
 });
 
+app.get('/api/me/details', requireAuth, (req, res) => {
+  const user = db.get('SELECT prenom, nom, email, password_hash, google_id FROM users WHERE id = ?', req.user.id);
+  if (!user) return res.status(404).json({ error: 'Introuvable.' });
+  res.json({
+    prenom: user.prenom,
+    nom: user.nom,
+    email: user.email,
+    has_password: !!(user.password_hash),
+    has_google: !!(user.google_id),
+  });
+});
+
 // ─── Route : Mot de passe oublie ──────────────────────────────────────────────
 app.post('/api/mot-de-passe-oublie', authLimiter, async (req, res) => {
   res.json({ success: true });
@@ -505,6 +517,95 @@ function emailResetHtml(prenom, url) {
 </body></html>`;
 }
 
+// ─── Route : Modifier profil ──────────────────────────────────────────────────
+app.put('/api/profil', requireAuth, (req, res) => {
+  let { prenom, nom } = req.body;
+  prenom = prenom?.trim();
+  nom    = nom?.trim();
+  if (!prenom || !nom) return res.status(400).json({ error: 'Prénom et nom requis.' });
+  if (prenom.length > 50 || nom.length > 50) return res.status(400).json({ error: 'Prénom/nom trop long (max 50 car.).' });
+
+  db.run('UPDATE users SET prenom = ?, nom = ? WHERE id = ?', prenom, nom, req.user.id);
+  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  // Renouveler le cookie avec les nouvelles infos
+  setAuthCookie(res, user, false);
+  discordLog('info', 'Profil modifié : ' + user.email, { user: user.email });
+  res.json({ success: true, prenom: user.prenom, nom: user.nom });
+});
+
+// ─── Route : Changer mot de passe (depuis l'espace membre) ───────────────────
+app.put('/api/changer-mot-de-passe', requireAuth, authLimiter, async (req, res) => {
+  const { ancien_mdp, nouveau_mdp, nouveau_mdp_confirm } = req.body;
+  if (!ancien_mdp || !nouveau_mdp) return res.status(400).json({ error: 'Tous les champs sont requis.' });
+  if (nouveau_mdp.length < 8) return res.status(400).json({ error: 'Le nouveau mot de passe doit faire au moins 8 caractères.' });
+  if (nouveau_mdp.length > 128) return res.status(400).json({ error: 'Mot de passe trop long.' });
+  if (nouveau_mdp !== nouveau_mdp_confirm) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
+
+  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+
+  // Les comptes Google sans mot de passe ont un hash vide
+  if (!user.password_hash) return res.status(400).json({ error: 'Votre compte est lié à Google. Définissez d\'abord un mot de passe.' });
+
+  const valid = await bcrypt.compare(ancien_mdp, user.password_hash);
+  if (!valid) return res.status(401).json({ error: 'Ancien mot de passe incorrect.' });
+
+  const hash = await bcrypt.hash(nouveau_mdp, 12);
+  db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
+  discordLog('info', 'Mot de passe changé : ' + user.email, { user: user.email });
+  res.json({ success: true });
+});
+
+// ─── Route : Historique commandes ─────────────────────────────────────────────
+app.get('/api/historique', requireAuth, (req, res) => {
+  const commandes = db.all(
+    'SELECT id, reference, description, montant, statut, created_at FROM commandes WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
+    req.user.id
+  );
+  res.json({ commandes });
+});
+
+// ─── Route : Supprimer compte ─────────────────────────────────────────────────
+app.delete('/api/compte', requireAuth, async (req, res) => {
+  const { password } = req.body;
+  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+
+  // Si le compte a un mot de passe, on le vérifie
+  if (user.password_hash) {
+    if (!password) return res.status(400).json({ error: 'Mot de passe requis pour confirmer la suppression.' });
+    const valid = await bcrypt.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Mot de passe incorrect.' });
+  }
+
+  // Supprimer les données liées
+  db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', user.id);
+  db.run('DELETE FROM commandes WHERE user_id = ?', user.id);
+  db.run('DELETE FROM users WHERE id = ?', user.id);
+
+  discordLog('warning', 'Compte supprimé : ' + user.email, { user: user.email });
+  res.clearCookie('auth_token');
+  res.json({ success: true });
+});
+
+// ─── Route : Définir un mot de passe (comptes Google sans mdp) ───────────────
+app.put('/api/definir-mot-de-passe', requireAuth, async (req, res) => {
+  const { nouveau_mdp, nouveau_mdp_confirm } = req.body;
+  if (!nouveau_mdp) return res.status(400).json({ error: 'Mot de passe requis.' });
+  if (nouveau_mdp.length < 8) return res.status(400).json({ error: 'Au moins 8 caractères.' });
+  if (nouveau_mdp.length > 128) return res.status(400).json({ error: 'Mot de passe trop long.' });
+  if (nouveau_mdp !== nouveau_mdp_confirm) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
+
+  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
+  if (user.password_hash) return res.status(400).json({ error: 'Vous avez déjà un mot de passe.' });
+
+  const hash = await bcrypt.hash(nouveau_mdp, 12);
+  db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
+  discordLog('info', 'Mot de passe défini (compte Google) : ' + user.email, { user: user.email });
+  res.json({ success: true });
+});
+
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
@@ -539,6 +640,15 @@ initSqlJs().then(SQL => {
       expires_at TEXT     NOT NULL,
       used       INTEGER  DEFAULT 0,
       created_at TEXT     DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS commandes (
+      id          INTEGER  PRIMARY KEY AUTOINCREMENT,
+      user_id     INTEGER  NOT NULL,
+      reference   TEXT     NOT NULL,
+      description TEXT     NOT NULL,
+      montant     REAL     DEFAULT 0,
+      statut      TEXT     DEFAULT 'en_attente',
+      created_at  TEXT     DEFAULT (datetime('now'))
     );
   `);
   saveDb();
