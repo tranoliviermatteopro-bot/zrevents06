@@ -89,7 +89,8 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc:  ["'self'"],
-      scriptSrc:   ["'self'", "'unsafe-inline'"],   // inline scripts dans les HTML
+      scriptSrc:     ["'self'", "'unsafe-inline'"],   // inline scripts dans les HTML
+      scriptSrcAttr: ["'unsafe-inline'"],             // autorise onclick="..." dans le HTML
       styleSrc:    ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc:     ["'self'", 'https://fonts.gstatic.com'],
       imgSrc:      ["'self'", 'data:', 'https:'],
