@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mot de passe oublié — zrevents06</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400;1,700&family=Nunito:wght@300;400;600;700&display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+:root{
+  --beige:#F5EDE0;--beige-dark:#E8D9C4;
+  --wood:#C4956A;--wood-dark:#8B5E3C;
+  --espresso:#3D2314;--honey:#D4A574;
+  --cream:#FDF8F2;--warm-white:#FAF6F0;
+}
+html{scroll-behavior:smooth;}
+body{font-family:'Nunito',sans-serif;background:var(--beige);color:var(--espresso);min-height:100vh;display:flex;flex-direction:column;}
+
+nav{position:fixed;top:0;left:0;right:0;z-index:100;padding:1rem clamp(1rem,4vw,3rem);display:flex;align-items:center;justify-content:space-between;background:rgba(253,248,242,0.94);backdrop-filter:blur(12px);box-shadow:0 4px 30px rgba(61,35,20,0.07);}
+.nav-logo img{height:2rem;width:auto;display:block;}
+.nav-back{font-size:0.76rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;text-decoration:none;color:var(--espresso);opacity:0.55;transition:opacity 0.2s,color 0.2s;}
+.nav-back:hover{opacity:1;color:var(--wood-dark);}
+
+.page{flex:1;display:flex;align-items:center;justify-content:center;padding:6rem 1.5rem 3rem;}
+
+.auth-card{width:100%;max-width:420px;background:var(--cream);border-radius:24px;padding:clamp(2rem,5vw,3rem);border:1px solid rgba(196,149,106,0.18);box-shadow:0 20px 60px rgba(61,35,20,0.1),0 1px 0 rgba(255,255,255,0.8) inset;}
+
+.auth-icon{font-size:2.8rem;display:block;text-align:center;margin-bottom:0.6rem;filter:drop-shadow(0 4px 12px rgba(196,149,106,0.35));}
+.auth-title{font-family:'Playfair Display',serif;font-size:clamp(1.5rem,4vw,1.85rem);font-weight:700;color:var(--espresso);text-align:center;margin-bottom:0.5rem;}
+.auth-title em{font-style:italic;color:var(--wood);}
+.auth-bar{width:50px;height:3px;background:linear-gradient(to right,var(--wood),var(--honey));border-radius:2px;margin:0 auto 1.2rem;}
+.auth-reassure{text-align:center;font-size:0.88rem;color:var(--espresso);opacity:0.65;line-height:1.7;margin-bottom:1.75rem;padding:0 0.5rem;}
+
+.alert{border-radius:12px;padding:0.9rem 1.1rem;font-size:0.85rem;font-weight:600;margin-bottom:1.2rem;display:none;line-height:1.5;}
+.alert.show{display:block;}
+.alert-error{background:rgba(192,57,43,0.08);border:1px solid rgba(192,57,43,0.22);color:#a93226;}
+.alert-success{background:rgba(39,174,96,0.08);border:1px solid rgba(39,174,96,0.22);color:#1d8348;}
+
+.form-group{margin-bottom:1.1rem;}
+label.form-label{display:block;font-size:0.69rem;letter-spacing:0.15em;text-transform:uppercase;color:var(--wood-dark);font-weight:700;margin-bottom:0.45rem;}
+.form-input{width:100%;background:var(--beige);border:1.5px solid rgba(196,149,106,0.25);border-radius:10px;padding:0.85rem 1rem;font-family:'Nunito',sans-serif;font-size:0.9rem;color:var(--espresso);outline:none;transition:border-color 0.25s,box-shadow 0.25s;}
+.form-input::placeholder{color:rgba(61,35,20,0.3);}
+.form-input:focus{border-color:var(--wood);box-shadow:0 0 0 4px rgba(196,149,106,0.12);}
+.form-input[aria-invalid="true"]{border-color:#C0392B;box-shadow:0 0 0 4px rgba(192,57,43,0.09);}
+.form-error{display:none;color:#a93226;font-size:0.75rem;margin-top:0.35rem;font-weight:600;}
+.form-error.show{display:block;}
+
+.btn-submit{width:100%;padding:1rem 1.5rem;background:linear-gradient(135deg,var(--wood),var(--honey));color:var(--warm-white);border:none;border-radius:50px;font-family:'Nunito',sans-serif;font-size:0.86rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;cursor:pointer;transition:all 0.3s;position:relative;overflow:hidden;box-shadow:0 8px 28px rgba(196,149,106,0.3);}
+.btn-submit::after{content:'';position:absolute;top:0;left:-70%;width:40%;height:100%;background:linear-gradient(120deg,transparent,rgba(255,255,255,0.3),transparent);transform:skewX(-20deg);animation:shine 3s ease-in-out infinite;pointer-events:none;}
+@keyframes shine{0%{left:-70%;}45%{left:120%;}100%{left:120%;}}
+.btn-submit:hover{background:linear-gradient(135deg,var(--honey),var(--wood));box-shadow:0 14px 38px rgba(196,149,106,0.45);transform:translateY(-2px);}
+.btn-submit:active{transform:translateY(0);}
+.btn-submit:disabled{opacity:0.65;cursor:not-allowed;transform:none;box-shadow:none;}
+
+.auth-links{text-align:center;margin-top:1.5rem;font-size:0.83rem;color:var(--espresso);opacity:0.65;}
+.auth-links a{color:var(--wood-dark);font-weight:700;text-decoration:none;transition:color 0.2s;}
+.auth-links a:hover{color:var(--wood);}
+
+.spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(253,248,242,0.4);border-top-color:var(--warm-white);border-radius:50%;animation:spin 0.7s linear infinite;vertical-align:middle;margin-right:0.4rem;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+footer{text-align:center;padding:1.5rem;font-size:0.71rem;color:rgba(61,35,20,0.38);}
+</style>
+</head>
+<body>
+
+<nav aria-label="Navigation principale">
+  <a href="/" class="nav-logo" aria-label="Accueil zrevents06"><img src="logos/logo.svg" alt="zrevents06"></a>
+  <a href="/connexion.html" class="nav-back">← Retour à la connexion</a>
+</nav>
+
+<main class="page">
+  <div class="auth-card" role="main">
+    <span class="auth-icon" aria-hidden="true">🔑</span>
+    <h1 class="auth-title">Mot de passe <em>oublié</em> ?</h1>
+    <div class="auth-bar" aria-hidden="true"></div>
+    <p class="auth-reassure">
+      Pas de panique ! Indiquez votre adresse e-mail et nous vous enverrons un lien pour réinitialiser votre mot de passe.
+    </p>
+
+    <div class="alert alert-error"   id="alert-error"   role="alert"  aria-live="assertive"></div>
+    <div class="alert alert-success" id="alert-success" role="status" aria-live="polite"></div>
+
+    <form id="form-oublie" novalidate aria-label="Formulaire de récupération de mot de passe">
+      <div class="form-group">
+        <label class="form-label" for="email">Adresse e-mail</label>
+        <input class="form-input" type="email" id="email" name="email"
+          autocomplete="email" required aria-required="true"
+          aria-describedby="err-email" placeholder="marie@exemple.fr">
+        <div class="form-error" id="err-email" role="alert"></div>
+      </div>
+
+      <button type="submit" class="btn-submit" id="btn-submit">
+        Envoyer le lien
+      </button>
+    </form>
+
+    <p class="auth-links">
+      <a href="/connexion.html">← Retour à la connexion</a>
+      &nbsp;·&nbsp;
+      <a href="/inscription.html">Créer un compte</a>
+    </p>
+  </div>
+</main>
+
+<footer>© <script>document.write(new Date().getFullYear())</script> zrevents06 · Artisan Pâtissier</footer>
+
+<script>
+const $ = id => document.getElementById(id);
+
+function clearAll() {
+  ['alert-error','alert-success'].forEach(id => $( id).classList.remove('show'));
+  $('err-email').classList.remove('show');
+  $('err-email').textContent = '';
+  $('email').removeAttribute('aria-invalid');
+}
+
+$('form-oublie').addEventListener('submit', async e => {
+  e.preventDefault();
+  clearAll();
+
+  const email = $('email').value.trim();
+  if (!email) {
+    $('email').setAttribute('aria-invalid','true');
+    $('err-email').textContent = 'Adresse e-mail requise.';
+    $('err-email').classList.add('show');
+    return;
+  }
+
+  const btn = $('btn-submit');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Envoi en cours…';
+
+  try {
+    const res  = await fetch('/api/mot-de-passe-oublie', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email }),
+    });
+    const json = await res.json();
+
+    if (!res.ok) {
+      const el = $('alert-error');
+      el.textContent = json.error || 'Une erreur est survenue.';
+      el.classList.add('show');
+    } else {
+      // Toujours afficher le succès (même si l'e-mail n'existe pas — sécurité)
+      $('form-oublie').hidden = true;
+      const el = $('alert-success');
+      el.innerHTML = '✓ Si cette adresse est associée à un compte, vous recevrez un e-mail dans quelques instants.<br><small style="opacity:.8">Pensez à vérifier vos spams.</small>';
+      el.classList.add('show');
+    }
+  } catch {
+    const el = $('alert-error');
+    el.textContent = 'Erreur réseau. Vérifiez votre connexion.';
+    el.classList.add('show');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Envoyer le lien';
+  }
+});
+</script>
+</body>
+</html>

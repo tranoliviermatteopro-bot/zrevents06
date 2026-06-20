@@ -1,0 +1,24 @@
+# Dépendances
+node_modules/
+
+# Variables d'environnement (NE JAMAIS COMMITER)
+.env
+.env.local
+.env.production
+
+# Base de données SQLite (données locales)
+data.db
+*.db
+
+# Fichiers temporaires
+*.log
+npm-debug.log*
+token-output.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
