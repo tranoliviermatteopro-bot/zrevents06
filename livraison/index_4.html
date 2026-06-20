@@ -36,6 +36,9 @@ nav.scrolled{background:rgba(253,248,242,0.95);backdrop-filter:blur(12px);box-sh
 .nav-links a::after{content:'';position:absolute;bottom:-4px;left:0;right:0;height:2px;background:var(--wood);transform:scaleX(0);transition:transform 0.3s;}
 .nav-links a:hover{opacity:1;color:var(--wood-dark);}
 .nav-links a:hover::after{transform:scaleX(1);}
+.nav-btn-connexion{background:var(--wood)!important;color:#fff!important;opacity:1!important;padding:0.45rem 1.1rem!important;border-radius:30px!important;font-size:clamp(0.6rem,1.1vw,0.78rem)!important;transition:background 0.2s,transform 0.2s!important;}
+.nav-btn-connexion:hover{background:var(--espresso)!important;transform:translateY(-1px)!important;}
+.nav-btn-connexion::after{display:none!important;}
 
 /* MOBILE NAV TOGGLE */
 .nav-toggle{display:none;flex-direction:column;justify-content:center;gap:5px;width:42px;height:42px;background:rgba(196,149,106,0.12);border:1px solid rgba(196,149,106,0.25);border-radius:10px;cursor:pointer;flex-shrink:0;z-index:101;padding:0;align-items:center;}
@@ -671,6 +674,7 @@ footer{background:var(--espresso);padding:2.5rem 4rem;display:flex;align-items:c
     <li><a href="#disponibilites">Disponibilités</a></li>
     <li><a href="#commandes">Commandes</a></li>
     <li><a href="#contact">Contact</a></li>
+    <li><a href="/connexion.html" class="nav-btn-connexion" id="nav-connexion-link">Connexion</a></li>
   </ul>
 </nav>
 <!-- HERO -->
@@ -2097,6 +2101,19 @@ function toggleNav() {
 }
 navToggle.addEventListener('click', toggleNav);
 navLinks.querySelectorAll('a').forEach(a => a.addEventListener('click', closeNav));
+
+// Bouton connexion : vérifier si déjà connecté
+(async () => {
+  try {
+    const r = await fetch('/api/me', { credentials: 'include' });
+    const link = document.getElementById('nav-connexion-link');
+    if (r.ok) {
+      const data = await r.json();
+      link.textContent = '👤 Mon compte';
+      link.href = '/espace-membre.html';
+    }
+  } catch(e) {}
+})();
 
 </script>
 
