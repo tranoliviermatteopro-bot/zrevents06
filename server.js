@@ -681,6 +681,10 @@ app.post('/api/devis', async (req, res) => {
   }
 });
 
+// ─── Suivi des messages Discord par email (valideId / refuseId) ──────────────
+// Permet de supprimer l'ancien message quand le statut change
+const devisMsgIds = new Map(); // email → { valideId, refuseId }
+
 // ─── Routes admin : Valider / Refuser un devis ───────────────────────────────
 function adminDevisPage(action, email, nom) {
   const isValide = action === 'valider';
@@ -716,29 +720,41 @@ app.get('/admin/devis/valider', async (req, res) => {
   const nom   = req.query.nom   || 'Client';
   res.send(adminDevisPage('valider', email, nom));
 
-  const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
-  if (wh) {
-    try {
-      await fetch(wh, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [{
-            author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
-            title: '✅  Devis validé',
-            description: '> Le devis a été **accepté**. Penser à contacter le client ! 📞',
-            color: 0x2ecc71,
-            fields: [
-              { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
-              { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
-            ],
-            footer: { text: 'zrevents06.onrender.com  •  Devis validé' },
-            timestamp: new Date().toISOString(),
-          }],
-        }),
-      });
-    } catch {}
-  }
+  const whValide  = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+  const whRefuse  = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
+  if (!whValide) return;
+  try {
+    const stored = devisMsgIds.get(email) || {};
+
+    // Supprimer l'ancien message dans #devis-refusé si existant
+    if (stored.refuseId && whRefuse) {
+      await fetch(`${whRefuse}/messages/${stored.refuseId}`, { method: 'DELETE' }).catch(() => {});
+      stored.refuseId = null;
+    }
+
+    // Poster dans #devis-validé et récupérer l'ID du message
+    const resp = await fetch(`${whValide}?wait=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [{
+          author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+          title: '✅  Devis validé',
+          description: '> Le devis a été **accepté**. Penser à contacter le client ! 📞',
+          color: 0x2ecc71,
+          fields: [
+            { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
+            { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
+          ],
+          footer: { text: 'zrevents06.onrender.com  •  Devis validé' },
+          timestamp: new Date().toISOString(),
+        }],
+      }),
+    });
+    const msg = await resp.json();
+    stored.valideId = msg.id;
+    devisMsgIds.set(email, stored);
+  } catch {}
 });
 
 app.get('/admin/devis/refuser', async (req, res) => {
@@ -746,29 +762,41 @@ app.get('/admin/devis/refuser', async (req, res) => {
   const nom   = req.query.nom   || 'Client';
   res.send(adminDevisPage('refuser', email, nom));
 
-  const wh = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
-  if (wh) {
-    try {
-      await fetch(wh, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [{
-            author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
-            title: '❌  Devis refusé',
-            description: '> Le devis a été **refusé**.',
-            color: 0xe74c3c,
-            fields: [
-              { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
-              { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
-            ],
-            footer: { text: 'zrevents06.onrender.com  •  Devis refusé' },
-            timestamp: new Date().toISOString(),
-          }],
-        }),
-      });
-    } catch {}
-  }
+  const whValide  = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+  const whRefuse  = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
+  if (!whRefuse) return;
+  try {
+    const stored = devisMsgIds.get(email) || {};
+
+    // Supprimer l'ancien message dans #devis-validé si existant
+    if (stored.valideId && whValide) {
+      await fetch(`${whValide}/messages/${stored.valideId}`, { method: 'DELETE' }).catch(() => {});
+      stored.valideId = null;
+    }
+
+    // Poster dans #devis-refusé et récupérer l'ID du message
+    const resp = await fetch(`${whRefuse}?wait=true`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        embeds: [{
+          author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+          title: '❌  Devis refusé',
+          description: '> Le devis a été **refusé**.',
+          color: 0xe74c3c,
+          fields: [
+            { name: '👤  Client', value: `\`\`\`${nom}\`\`\``, inline: true },
+            { name: '📧  Email',  value: `\`\`\`${email}\`\`\``, inline: true },
+          ],
+          footer: { text: 'zrevents06.onrender.com  •  Devis refusé' },
+          timestamp: new Date().toISOString(),
+        }],
+      }),
+    });
+    const msg = await resp.json();
+    stored.refuseId = msg.id;
+    devisMsgIds.set(email, stored);
+  } catch {}
 });
 
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
