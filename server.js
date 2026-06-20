@@ -722,13 +722,21 @@ app.get('/admin/devis/valider', async (req, res) => {
 
   const whValide  = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
   const whRefuse  = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
-  if (!whValide) return;
+  if (!whValide) { console.log('[DEVIS] DISCORD_WEBHOOK_DEVIS_VALIDE manquant'); return; }
   try {
     const stored = devisMsgIds.get(email) || {};
+    console.log(`[DEVIS] valider — email=${email} stored=`, stored);
 
+    // Supprimer l'ancien message dans #devis-validé si déjà validé (double-clic)
+    if (stored.valideId && whValide) {
+      const delR = await fetch(`${whValide}/messages/${stored.valideId}`, { method: 'DELETE' });
+      console.log(`[DEVIS] DELETE ancien valideId=${stored.valideId} → ${delR.status}`);
+      stored.valideId = null;
+    }
     // Supprimer l'ancien message dans #devis-refusé si existant
     if (stored.refuseId && whRefuse) {
-      await fetch(`${whRefuse}/messages/${stored.refuseId}`, { method: 'DELETE' }).catch(() => {});
+      const delR = await fetch(`${whRefuse}/messages/${stored.refuseId}`, { method: 'DELETE' });
+      console.log(`[DEVIS] DELETE ancien refuseId=${stored.refuseId} → ${delR.status}`);
       stored.refuseId = null;
     }
 
@@ -752,9 +760,10 @@ app.get('/admin/devis/valider', async (req, res) => {
       }),
     });
     const msg = await resp.json();
+    console.log(`[DEVIS] POST valide → status=${resp.status} msg.id=${msg.id}`);
     stored.valideId = msg.id;
     devisMsgIds.set(email, stored);
-  } catch {}
+  } catch (err) { console.error('[DEVIS] valider erreur:', err); }
 });
 
 app.get('/admin/devis/refuser', async (req, res) => {
@@ -764,14 +773,22 @@ app.get('/admin/devis/refuser', async (req, res) => {
 
   const whValide  = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
   const whRefuse  = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
-  if (!whRefuse) return;
+  if (!whRefuse) { console.log('[DEVIS] DISCORD_WEBHOOK_DEVIS_REFUSE manquant'); return; }
   try {
     const stored = devisMsgIds.get(email) || {};
+    console.log(`[DEVIS] refuser — email=${email} stored=`, stored);
 
     // Supprimer l'ancien message dans #devis-validé si existant
     if (stored.valideId && whValide) {
-      await fetch(`${whValide}/messages/${stored.valideId}`, { method: 'DELETE' }).catch(() => {});
+      const delR = await fetch(`${whValide}/messages/${stored.valideId}`, { method: 'DELETE' });
+      console.log(`[DEVIS] DELETE valideId=${stored.valideId} → ${delR.status}`);
       stored.valideId = null;
+    }
+    // Supprimer l'ancien message dans #devis-refusé si déjà refusé (double-clic)
+    if (stored.refuseId && whRefuse) {
+      const delR = await fetch(`${whRefuse}/messages/${stored.refuseId}`, { method: 'DELETE' });
+      console.log(`[DEVIS] DELETE ancien refuseId=${stored.refuseId} → ${delR.status}`);
+      stored.refuseId = null;
     }
 
     // Poster dans #devis-refusé et récupérer l'ID du message
@@ -794,9 +811,10 @@ app.get('/admin/devis/refuser', async (req, res) => {
       }),
     });
     const msg = await resp.json();
+    console.log(`[DEVIS] POST refuse → status=${resp.status} msg.id=${msg.id}`);
     stored.refuseId = msg.id;
     devisMsgIds.set(email, stored);
-  } catch {}
+  } catch (err) { console.error('[DEVIS] refuser erreur:', err); }
 });
 
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
