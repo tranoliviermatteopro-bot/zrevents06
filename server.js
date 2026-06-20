@@ -616,19 +616,63 @@ app.post('/api/devis', async (req, res) => {
   const webhookUrl = process.env.DISCORD_WEBHOOK_DEVIS;
   if (webhookUrl) {
     try {
+      // Résumé court du message (250 premiers caractères)
+      const apercu = message
+        ? message.replace(/\n+/g, ' ').slice(0, 250) + (message.length > 250 ? '…' : '')
+        : '_(aucun détail fourni)_';
+
       await fetch(webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          content: '||@here||',
           embeds: [{
-            title: '🍰 Nouvelle demande de devis reçue',
-            color: 0xf59e0b,
+            author: {
+              name: '✨ zrevents06 — Pâtisserie & Événements',
+              icon_url: 'https://zrevents06.onrender.com/favicon.ico',
+            },
+            title: '🍰  Nouvelle demande de devis',
+            description: `> Un client vient de soumettre une demande.\n> Merci de traiter ce devis dans les meilleurs délais ! ⏰`,
+            color: 0xc8853a,
             fields: [
-              { name: '👤 Client', value: nom || 'Inconnu', inline: true },
-              { name: '📧 Email', value: email || '?', inline: true },
-              { name: '📝 Message', value: message ? message.slice(0, 1024) : '_(aucun)_', inline: false },
+              {
+                name: '👤  Client',
+                value: `\`\`\`${nom || 'Inconnu'}\`\`\``,
+                inline: true,
+              },
+              {
+                name: '📧  Email',
+                value: `\`\`\`${email || 'non renseigné'}\`\`\``,
+                inline: true,
+              },
+              {
+                name: '​',
+                value: '​',
+                inline: false,
+              },
+              {
+                name: '📋  Détails de la demande',
+                value: apercu,
+                inline: false,
+              },
+              {
+                name: '​',
+                value: '​',
+                inline: false,
+              },
+              {
+                name: '⚡  Actions rapides',
+                value: [
+                  `✅  [**Valider ce devis**](https://zrevents06.onrender.com/admin/devis/valider?email=${encodeURIComponent(email || '')})`,
+                  `❌  [**Refuser ce devis**](https://zrevents06.onrender.com/admin/devis/refuser?email=${encodeURIComponent(email || '')})`,
+                ].join('\n'),
+                inline: false,
+              },
             ],
-            footer: { text: 'zrevents06 — pâtisserie & événements' },
+            thumbnail: { url: 'https://em-content.zobj.net/source/twitter/376/shortcake_1f370.png' },
+            footer: {
+              text: 'zrevents06.onrender.com  •  Devis en attente de traitement',
+            },
             timestamp: new Date().toISOString(),
           }],
         }),
