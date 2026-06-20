@@ -178,18 +178,19 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Un compte existe deja avec cet e-mail.' });
   }
 
-  const password_hash = await bcrypt.hash(password, 12);
-  const isDev         = process.env.NODE_ENV !== 'production';
-  const email_token   = isDev ? null : crypto.randomBytes(32).toString('hex');
+  const password_hash  = await bcrypt.hash(password, 12);
+  const smtpConfigured = !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  const needsVerif     = process.env.NODE_ENV === 'production' && smtpConfigured;
+  const email_token    = needsVerif ? crypto.randomBytes(32).toString('hex') : null;
 
   db.run(
     'INSERT INTO users (prenom, nom, email, password_hash, email_token, email_verifie) VALUES (?, ?, ?, ?, ?, ?)',
-    prenom.trim(), nom.trim(), email.toLowerCase(), password_hash, email_token, isDev ? 1 : 0
+    prenom.trim(), nom.trim(), email.toLowerCase(), password_hash, email_token, needsVerif ? 0 : 1
   );
 
-  if (isDev) {
-    await discordLog('info', 'Nouvelle inscription (dev) : ' + email, { user: email });
-    return res.json({ success: true, message: 'Compte cree et active automatiquement (mode dev).' });
+  if (!needsVerif) {
+    await discordLog('info', 'Nouvelle inscription (auto-verified) : ' + email, { user: email });
+    return res.json({ success: true, message: 'Compte créé et activé ! Vous pouvez vous connecter.' });
   }
 
   const confirmUrl = `${BASE_URL}/api/confirmer-email?token=${email_token}`;
@@ -200,13 +201,15 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
       subject: 'Confirmez votre adresse e-mail - zrevents06',
       html:    emailConfirmationHtml(prenom.trim(), confirmUrl),
     });
+    await discordLog('info', 'Nouvelle inscription : ' + email, { user: email });
+    return res.json({ success: true, message: 'Compte créé ! Vérifiez vos e-mails pour activer votre compte.' });
   } catch (err) {
+    // L'email a échoué : on active quand même le compte pour ne pas bloquer l'utilisateur
     console.error('[mail] Erreur envoi confirmation:', err.message);
-    await discordLog('error', 'Erreur envoi e-mail confirmation', { message: err.message });
+    await discordLog('error', 'Erreur envoi e-mail confirmation — compte auto-activé', { message: err.message, user: email });
+    db.run('UPDATE users SET email_verifie = 1, email_token = NULL WHERE email = ?', email.toLowerCase());
+    return res.json({ success: true, message: 'Compte créé et activé ! (e-mail non envoyé)' });
   }
-
-  await discordLog('info', 'Nouvelle inscription : ' + email, { user: email });
-  res.json({ success: true, message: 'Compte cree ! Verifiez vos e-mails pour activer votre compte.' });
 });
 
 // ─── Route : Confirmation e-mail ──────────────────────────────────────────────
