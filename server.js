@@ -22,14 +22,11 @@ async function discordLog(level, message, extra = {}) {
 }
 
 function dbLog(level, message, extra = {}) {
-  try {
-    db.run(
-      `INSERT INTO site_logs (level, message, url, method, status, ip, extra) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      level, message,
-      extra.url || null, extra.method || null, extra.status || null,
-      extra.ip || null, extra.extra ? JSON.stringify(extra.extra) : null
-    );
-  } catch {}
+  pool.query(
+    'INSERT INTO site_logs (level, message, url, method, status, ip, extra) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+    [level, message, extra.url || null, extra.method || null, extra.status || null,
+     extra.ip || null, extra.extra ? JSON.stringify(extra.extra) : null]
+  ).catch(() => {});
 }
 
 const express      = require('express');
@@ -41,13 +38,10 @@ const rateLimit    = require('express-rate-limit');
 const dns          = require('dns').promises;
 const crypto       = require('crypto');
 const path         = require('path');
-const fs           = require('fs');
-const initSqlJs    = require('sql.js');
+const { Pool }     = require('pg');
 const passport     = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const expressSession = require('express-session');
-
-const DB_PATH = path.join(__dirname, 'data.db');
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-changez-en-prod';
@@ -61,39 +55,31 @@ const transporter = nodemailer.createTransport({
   auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
 });
 
-// ─── Wrapper synchrone autour de sql.js ───────────────────────────────────────
-let _db;
+// ─── PostgreSQL Pool ──────────────────────────────────────────────────────────
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
+});
 
-function saveDb() {
-  const data = _db.export();
-  fs.writeFileSync(DB_PATH, Buffer.from(data));
+function toPositional(sql) {
+  let i = 0;
+  return sql.replace(/\?/g, () => `$${++i}`);
 }
 
 const db = {
-  exec(sql) {
-    _db.run(sql);
-    saveDb();
+  async get(sql, ...params) {
+    const { rows } = await pool.query(toPositional(sql), params);
+    return rows[0] || null;
   },
-  get(sql, ...params) {
-    const stmt = _db.prepare(sql);
-    stmt.bind(params);
-    const row = stmt.step() ? stmt.getAsObject() : null;
-    stmt.free();
-    return row;
-  },
-  all(sql, ...params) {
-    const stmt = _db.prepare(sql);
-    stmt.bind(params);
-    const rows = [];
-    while (stmt.step()) rows.push(stmt.getAsObject());
-    stmt.free();
+  async all(sql, ...params) {
+    const { rows } = await pool.query(toPositional(sql), params);
     return rows;
   },
-  run(sql, ...params) {
-    const stmt = _db.prepare(sql);
-    stmt.run(params);
-    stmt.free();
-    saveDb();
+  async run(sql, ...params) {
+    await pool.query(toPositional(sql), params);
+  },
+  async exec(sql) {
+    await pool.query(sql);
   },
 };
 
@@ -219,25 +205,25 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
     clientID:     process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL:  `${BASE_URL}/auth/google/callback`,
-  }, (accessToken, refreshToken, profile, done) => {
+  }, async (accessToken, refreshToken, profile, done) => {
     try {
       const email    = profile.emails?.[0]?.value || '';
       const prenom   = profile.name?.givenName || profile.displayName || 'Utilisateur';
       const nom      = profile.name?.familyName || '';
       const googleId = profile.id;
 
-      let user = db.get('SELECT * FROM users WHERE google_id = ?', googleId);
-      if (!user && email) user = db.get('SELECT * FROM users WHERE email = ?', email.toLowerCase());
+      let user = await db.get('SELECT * FROM users WHERE google_id = ?', googleId);
+      if (!user && email) user = await db.get('SELECT * FROM users WHERE email = ?', email.toLowerCase());
 
       if (!user) {
-        db.run(
+        await db.run(
           'INSERT INTO users (prenom, nom, email, google_id, email_verifie, password_hash) VALUES (?, ?, ?, ?, 1, ?)',
           prenom, nom, email.toLowerCase(), googleId, ''
         );
-        user = db.get('SELECT * FROM users WHERE google_id = ?', googleId);
+        user = await db.get('SELECT * FROM users WHERE google_id = ?', googleId);
       } else if (!user.google_id) {
-        db.run('UPDATE users SET google_id = ?, email_verifie = 1 WHERE id = ?', googleId, user.id);
-        user = db.get('SELECT * FROM users WHERE id = ?', user.id);
+        await db.run('UPDATE users SET google_id = ?, email_verifie = 1 WHERE id = ?', googleId, user.id);
+        user = await db.get('SELECT * FROM users WHERE id = ?', user.id);
       }
 
       return done(null, user);
@@ -292,7 +278,7 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Aucun serveur e-mail trouve pour ce domaine.' });
   }
 
-  const existing = db.get('SELECT id FROM users WHERE email = ?', email.toLowerCase());
+  const existing = await db.get('SELECT id FROM users WHERE email = ?', email.toLowerCase());
   if (existing) {
     return res.status(400).json({ error: 'Un compte existe deja avec cet e-mail.' });
   }
@@ -302,7 +288,7 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
   const needsVerif     = process.env.NODE_ENV === 'production' && smtpConfigured;
   const email_token    = needsVerif ? crypto.randomBytes(32).toString('hex') : null;
 
-  db.run(
+  await db.run(
     'INSERT INTO users (prenom, nom, email, password_hash, email_token, email_verifie) VALUES (?, ?, ?, ?, ?, ?)',
     prenom.trim(), nom.trim(), email.toLowerCase(), password_hash, email_token, needsVerif ? 0 : 1
   );
@@ -326,20 +312,20 @@ app.post('/api/inscription', authLimiter, async (req, res) => {
     // L'email a échoué : on active quand même le compte pour ne pas bloquer l'utilisateur
     console.error('[mail] Erreur envoi confirmation:', err.message);
     await discordLog('error', 'Erreur envoi e-mail confirmation — compte auto-activé', { message: err.message, user: email });
-    db.run('UPDATE users SET email_verifie = 1, email_token = NULL WHERE email = ?', email.toLowerCase());
+    await db.run('UPDATE users SET email_verifie = 1, email_token = NULL WHERE email = ?', email.toLowerCase());
     return res.json({ success: true, message: 'Compte créé et activé ! (e-mail non envoyé)' });
   }
 });
 
 // ─── Route : Confirmation e-mail ──────────────────────────────────────────────
-app.get('/api/confirmer-email', (req, res) => {
+app.get('/api/confirmer-email', async (req, res) => {
   const { token } = req.query;
   if (!token) return res.redirect('/connexion.html?error=lien_invalide');
 
-  const user = db.get('SELECT id FROM users WHERE email_token = ? AND email_verifie = 0', token);
+  const user = await db.get('SELECT id FROM users WHERE email_token = ? AND email_verifie = 0', token);
   if (!user) return res.redirect('/connexion.html?error=lien_invalide');
 
-  db.run('UPDATE users SET email_verifie = 1, email_token = NULL WHERE id = ?', user.id);
+  await db.run('UPDATE users SET email_verifie = 1, email_token = NULL WHERE id = ?', user.id);
   res.redirect('/connexion.html?confirmed=1');
 });
 
@@ -351,7 +337,7 @@ app.post('/api/connexion', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'E-mail et mot de passe requis.' });
   }
 
-  const user = db.get('SELECT * FROM users WHERE email = ?', email.toLowerCase());
+  const user = await db.get('SELECT * FROM users WHERE email = ?', email.toLowerCase());
 
   const hashToCheck = user?.password_hash || '$2b$12$aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.';
   const valid       = await bcrypt.compare(password, hashToCheck);
@@ -375,12 +361,12 @@ app.post('/api/deconnexion', (req, res) => {
 });
 
 // ─── Route : Utilisateur connecte ─────────────────────────────────────────────
-app.get('/api/me', requireAuth, (req, res) => {
+app.get('/api/me', requireAuth, async (req, res) => {
   res.json({ id: req.user.id, email: req.user.email, prenom: req.user.prenom });
 });
 
-app.get('/api/me/details', requireAuth, (req, res) => {
-  const user = db.get('SELECT prenom, nom, email, password_hash, google_id FROM users WHERE id = ?', req.user.id);
+app.get('/api/me/details', requireAuth, async (req, res) => {
+  const user = await db.get('SELECT prenom, nom, email, password_hash, google_id FROM users WHERE id = ?', req.user.id);
   if (!user) return res.status(404).json({ error: 'Introuvable.' });
   res.json({
     prenom: user.prenom,
@@ -398,7 +384,7 @@ app.post('/api/mot-de-passe-oublie', authLimiter, async (req, res) => {
   const { email } = req.body;
   if (!email || !EMAIL_RE.test(email)) return;
 
-  const user = db.get(
+  const user = await db.get(
     'SELECT id, prenom FROM users WHERE email = ? AND email_verifie = 1',
     email.toLowerCase()
   );
@@ -407,8 +393,8 @@ app.post('/api/mot-de-passe-oublie', authLimiter, async (req, res) => {
   const token      = crypto.randomBytes(32).toString('hex');
   const expires_at = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-  db.run('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0', user.id);
-  db.run(
+  await db.run('UPDATE password_reset_tokens SET used = 1 WHERE user_id = ? AND used = 0', user.id);
+  await db.run(
     'INSERT INTO password_reset_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
     user.id, token, expires_at
   );
@@ -441,7 +427,7 @@ app.post('/api/reinitialiser-mot-de-passe', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
   }
 
-  const record = db.get(
+  const record = await db.get(
     'SELECT id, user_id, expires_at, used FROM password_reset_tokens WHERE token = ?',
     token
   );
@@ -451,8 +437,8 @@ app.post('/api/reinitialiser-mot-de-passe', authLimiter, async (req, res) => {
   }
 
   const password_hash = await bcrypt.hash(password, 12);
-  db.run('UPDATE users SET password_hash = ? WHERE id = ?', password_hash, record.user_id);
-  db.run('UPDATE password_reset_tokens SET used = 1 WHERE id = ?', record.id);
+  await db.run('UPDATE users SET password_hash = ? WHERE id = ?', password_hash, record.user_id);
+  await db.run('UPDATE password_reset_tokens SET used = 1 WHERE id = ?', record.id);
 
   res.json({ success: true });
 });
@@ -535,15 +521,15 @@ function emailResetHtml(prenom, url) {
 }
 
 // ─── Route : Modifier profil ──────────────────────────────────────────────────
-app.put('/api/profil', requireAuth, (req, res) => {
+app.put('/api/profil', requireAuth, async (req, res) => {
   let { prenom, nom } = req.body;
   prenom = prenom?.trim();
   nom    = nom?.trim();
   if (!prenom || !nom) return res.status(400).json({ error: 'Prénom et nom requis.' });
   if (prenom.length > 50 || nom.length > 50) return res.status(400).json({ error: 'Prénom/nom trop long (max 50 car.).' });
 
-  db.run('UPDATE users SET prenom = ?, nom = ? WHERE id = ?', prenom, nom, req.user.id);
-  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  await db.run('UPDATE users SET prenom = ?, nom = ? WHERE id = ?', prenom, nom, req.user.id);
+  const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
   // Renouveler le cookie avec les nouvelles infos
   setAuthCookie(res, user, false);
   discordLog('info', 'Profil modifié : ' + user.email, { user: user.email });
@@ -558,7 +544,7 @@ app.put('/api/changer-mot-de-passe', requireAuth, authLimiter, async (req, res) 
   if (nouveau_mdp.length > 128) return res.status(400).json({ error: 'Mot de passe trop long.' });
   if (nouveau_mdp !== nouveau_mdp_confirm) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
 
-  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
 
   // Les comptes Google sans mot de passe ont un hash vide
@@ -568,14 +554,14 @@ app.put('/api/changer-mot-de-passe', requireAuth, authLimiter, async (req, res) 
   if (!valid) return res.status(401).json({ error: 'Ancien mot de passe incorrect.' });
 
   const hash = await bcrypt.hash(nouveau_mdp, 12);
-  db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
+  await db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
   discordLog('info', 'Mot de passe changé : ' + user.email, { user: user.email });
   res.json({ success: true });
 });
 
 // ─── Route : Historique commandes ─────────────────────────────────────────────
-app.get('/api/historique', requireAuth, (req, res) => {
-  const commandes = db.all(
+app.get('/api/historique', requireAuth, async (req, res) => {
+  const commandes = await db.all(
     'SELECT id, reference, description, montant, statut, created_at FROM commandes WHERE user_id = ? ORDER BY created_at DESC LIMIT 50',
     req.user.id
   );
@@ -585,7 +571,7 @@ app.get('/api/historique', requireAuth, (req, res) => {
 // ─── Route : Supprimer compte ─────────────────────────────────────────────────
 app.delete('/api/compte', requireAuth, async (req, res) => {
   const { password } = req.body;
-  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
 
   // Si le compte a un mot de passe, on le vérifie
@@ -596,9 +582,9 @@ app.delete('/api/compte', requireAuth, async (req, res) => {
   }
 
   // Supprimer les données liées
-  db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', user.id);
-  db.run('DELETE FROM commandes WHERE user_id = ?', user.id);
-  db.run('DELETE FROM users WHERE id = ?', user.id);
+  await db.run('DELETE FROM password_reset_tokens WHERE user_id = ?', user.id);
+  await db.run('DELETE FROM commandes WHERE user_id = ?', user.id);
+  await db.run('DELETE FROM users WHERE id = ?', user.id);
 
   discordLog('warning', 'Compte supprimé : ' + user.email, { user: user.email });
   res.clearCookie('auth_token');
@@ -613,12 +599,12 @@ app.put('/api/definir-mot-de-passe', requireAuth, async (req, res) => {
   if (nouveau_mdp.length > 128) return res.status(400).json({ error: 'Mot de passe trop long.' });
   if (nouveau_mdp !== nouveau_mdp_confirm) return res.status(400).json({ error: 'Les mots de passe ne correspondent pas.' });
 
-  const user = db.get('SELECT * FROM users WHERE id = ?', req.user.id);
+  const user = await db.get('SELECT * FROM users WHERE id = ?', req.user.id);
   if (!user) return res.status(404).json({ error: 'Utilisateur introuvable.' });
   if (user.password_hash) return res.status(400).json({ error: 'Vous avez déjà un mot de passe.' });
 
   const hash = await bcrypt.hash(nouveau_mdp, 12);
-  db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
+  await db.run('UPDATE users SET password_hash = ? WHERE id = ?', hash, user.id);
   discordLog('info', 'Mot de passe défini (compte Google) : ' + user.email, { user: user.email });
   res.json({ success: true });
 });
@@ -633,7 +619,7 @@ app.post('/api/devis', async (req, res) => {
 
   // Sauvegarder en base de données
   try {
-    db.run(
+    await db.run(
       `INSERT INTO devis (nom, email, telephone, date_evenement, heure_evenement, lieu, nombre_personnes, type_evenement, details)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       nom || '', email || '', telephone || '', date_evenement || '',
@@ -892,7 +878,7 @@ const adminAuthLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standard
 app.post('/admin/api/login', adminAuthLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis.' });
-  const admin = db.get('SELECT * FROM admins WHERE email = ?', email.toLowerCase().trim());
+  const admin = await db.get('SELECT * FROM admins WHERE email = ?', email.toLowerCase().trim());
   if (!admin) return res.status(401).json({ error: 'Identifiants incorrects.' });
   const ok = await bcrypt.compare(password, admin.password_hash);
   if (!ok) return res.status(401).json({ error: 'Identifiants incorrects.' });
@@ -921,7 +907,7 @@ app.get('/admin/api/me', requireAdminAuth, (req, res) => {
 });
 
 // ─── GET /admin/api/devis ─────────────────────────────────────────────────────
-app.get('/admin/api/devis', requireAdminAuth, (req, res) => {
+app.get('/admin/api/devis', requireAdminAuth, async (req, res) => {
   const { statut, q, limit = 50, offset = 0 } = req.query;
   let sql = 'SELECT * FROM devis WHERE 1=1';
   const params = [];
@@ -929,26 +915,26 @@ app.get('/admin/api/devis', requireAdminAuth, (req, res) => {
     sql += ' AND statut = ?'; params.push(statut);
   }
   if (q) {
-    sql += ' AND (nom LIKE ? OR email LIKE ?)';
+    sql += ' AND (nom ILIKE ? OR email ILIKE ?)';
     params.push(`%${q}%`, `%${q}%`);
   }
   sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(parseInt(limit), parseInt(offset));
-  const rows = db.all(sql, ...params);
-  const total = db.get('SELECT COUNT(*) as n FROM devis' + (statut ? ' WHERE statut = ?' : ''), ...(statut ? [statut] : []));
-  res.json({ devis: rows, total: total?.n || 0 });
+  const rows = await db.all(sql, ...params);
+  const total = await db.get('SELECT COUNT(*) as n FROM devis' + (statut ? ' WHERE statut = ?' : ''), ...(statut ? [statut] : []));
+  res.json({ devis: rows, total: parseInt(total?.n || 0) });
 });
 
 // ─── GET /admin/api/devis/:id ─────────────────────────────────────────────────
-app.get('/admin/api/devis/:id', requireAdminAuth, (req, res) => {
-  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+app.get('/admin/api/devis/:id', requireAdminAuth, async (req, res) => {
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
   if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
   res.json({ devis: d });
 });
 
 // ─── POST /admin/api/devis/:id/valider ───────────────────────────────────────
 app.post('/admin/api/devis/:id/valider', requireAdminAuth, async (req, res) => {
-  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
   if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
 
   const whValide = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
@@ -982,11 +968,11 @@ app.post('/admin/api/devis/:id/valider', requireAdminAuth, async (req, res) => {
     } catch (err) { console.error('[ADMIN] Discord valider:', err); }
   }
 
-  db.run(
-    `UPDATE devis SET statut='valide', discord_valide_id=?, discord_refuse_id=NULL, updated_at=datetime('now') WHERE id=?`,
+  await db.run(
+    `UPDATE devis SET statut='valide', discord_valide_id=?, discord_refuse_id=NULL, updated_at=NOW() WHERE id=?`,
     valideId || null, d.id
   );
-  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
     d.id, 'valide', req.admin.email, null);
   // Synchroniser aussi le Map en mémoire
   devisMsgIds.set(d.email, { valideId, refuseId: null });
@@ -996,7 +982,7 @@ app.post('/admin/api/devis/:id/valider', requireAdminAuth, async (req, res) => {
 
 // ─── POST /admin/api/devis/:id/refuser ───────────────────────────────────────
 app.post('/admin/api/devis/:id/refuser', requireAdminAuth, async (req, res) => {
-  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
   if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
 
   const whValide = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
@@ -1029,11 +1015,11 @@ app.post('/admin/api/devis/:id/refuser', requireAdminAuth, async (req, res) => {
     } catch (err) { console.error('[ADMIN] Discord refuser:', err); }
   }
 
-  db.run(
-    `UPDATE devis SET statut='refuse', discord_refuse_id=?, discord_valide_id=NULL, updated_at=datetime('now') WHERE id=?`,
+  await db.run(
+    `UPDATE devis SET statut='refuse', discord_refuse_id=?, discord_valide_id=NULL, updated_at=NOW() WHERE id=?`,
     refuseId || null, d.id
   );
-  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
     d.id, 'refuse', req.admin.email, null);
   devisMsgIds.set(d.email, { valideId: null, refuseId });
   dbLog('info', `Devis #${d.id} refusé par ${req.admin.email}`, { ip: req.ip });
@@ -1041,8 +1027,8 @@ app.post('/admin/api/devis/:id/refuser', requireAdminAuth, async (req, res) => {
 });
 
 // ─── GET /admin/api/devis/:id/print ──────────────────────────────────────────
-app.get('/admin/api/devis/:id/print', requireAdminAuth, (req, res) => {
-  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+app.get('/admin/api/devis/:id/print', requireAdminAuth, async (req, res) => {
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
   if (!d) return res.status(404).send('Devis introuvable.');
   const statLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' }[d.statut] || d.statut;
   const statColor = { en_attente: '#f59e0b', valide: '#10b981', refuse: '#ef4444' }[d.statut] || '#6b7280';
@@ -1087,7 +1073,7 @@ app.get('/admin/api/devis/:id/print', requireAdminAuth, (req, res) => {
 });
 
 // ─── GET /admin/api/logs ──────────────────────────────────────────────────────
-app.get('/admin/api/logs', requireAdminAuth, (req, res) => {
+app.get('/admin/api/logs', requireAdminAuth, async (req, res) => {
   const { level, limit = 100, offset = 0 } = req.query;
   let sql = 'SELECT * FROM site_logs WHERE 1=1';
   const params = [];
@@ -1096,32 +1082,32 @@ app.get('/admin/api/logs', requireAdminAuth, (req, res) => {
   }
   sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(parseInt(limit), parseInt(offset));
-  res.json({ logs: db.all(sql, ...params) });
+  res.json({ logs: await db.all(sql, ...params) });
 });
 
 // ─── GET /admin/api/stats ─────────────────────────────────────────────────────
-app.get('/admin/api/stats', requireAdminAuth, (req, res) => {
-  const total      = db.get('SELECT COUNT(*) as n FROM devis');
-  const en_attente = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='en_attente'");
-  const valide     = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='valide'");
-  const refuse     = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='refuse'");
-  const parMois    = db.all(`
-    SELECT strftime('%Y-%m', created_at) as mois, COUNT(*) as total,
+app.get('/admin/api/stats', requireAdminAuth, async (req, res) => {
+  const total      = await db.get('SELECT COUNT(*) as n FROM devis');
+  const en_attente = await db.get("SELECT COUNT(*) as n FROM devis WHERE statut='en_attente'");
+  const valide     = await db.get("SELECT COUNT(*) as n FROM devis WHERE statut='valide'");
+  const refuse     = await db.get("SELECT COUNT(*) as n FROM devis WHERE statut='refuse'");
+  const parMois    = await db.all(`
+    SELECT TO_CHAR(created_at, 'YYYY-MM') as mois, COUNT(*) as total,
            SUM(CASE WHEN statut='valide' THEN 1 ELSE 0 END) as valide
     FROM devis GROUP BY mois ORDER BY mois DESC LIMIT 6
   `);
-  const errors  = db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='error'");
-  const warnings = db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='warning'");
+  const errors   = await db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='error'");
+  const warnings = await db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='warning'");
   res.json({
-    devis: { total: total?.n || 0, en_attente: en_attente?.n || 0, valide: valide?.n || 0, refuse: refuse?.n || 0 },
+    devis: { total: parseInt(total?.n || 0), en_attente: parseInt(en_attente?.n || 0), valide: parseInt(valide?.n || 0), refuse: parseInt(refuse?.n || 0) },
     parMois: parMois.reverse(),
-    logs: { errors: errors?.n || 0, warnings: warnings?.n || 0 },
+    logs: { errors: parseInt(errors?.n || 0), warnings: parseInt(warnings?.n || 0) },
   });
 });
 
 // ─── GET /admin/api/admins ────────────────────────────────────────────────────
-app.get('/admin/api/admins', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
-  const admins = db.all('SELECT id, nom, email, role, created_at FROM admins ORDER BY created_at DESC');
+app.get('/admin/api/admins', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
+  const admins = await db.all('SELECT id, nom, email, role, created_at FROM admins ORDER BY created_at DESC');
   res.json({ admins });
 });
 
@@ -1130,120 +1116,120 @@ app.post('/admin/api/admins', requireAdminAuth, requireAdminRole('admin'), async
   const { nom, email, password, role } = req.body;
   if (!nom || !email || !password) return res.status(400).json({ error: 'Nom, email et mot de passe requis.' });
   if (!['admin', 'moderateur'].includes(role)) return res.status(400).json({ error: 'Rôle invalide.' });
-  const exists = db.get('SELECT id FROM admins WHERE email = ?', email.toLowerCase().trim());
+  const exists = await db.get('SELECT id FROM admins WHERE email = ?', email.toLowerCase().trim());
   if (exists) return res.status(409).json({ error: 'Un compte avec cet email existe déjà.' });
   const hash = await bcrypt.hash(password, 12);
-  db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
     nom.trim(), email.toLowerCase().trim(), hash, role);
   dbLog('info', `Nouvel admin créé : ${email} (${role}) par ${req.admin.email}`);
   res.json({ success: true });
 });
 
 // ─── DELETE /admin/api/admins/:id ─────────────────────────────────────────────
-app.delete('/admin/api/admins/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+app.delete('/admin/api/admins/:id', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
   if (parseInt(req.params.id) === req.admin.id)
     return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
-  db.run('DELETE FROM admins WHERE id = ?', req.params.id);
+  await db.run('DELETE FROM admins WHERE id = ?', req.params.id);
   res.json({ success: true });
 });
 
 // ─── POST /admin/api/setup (création du 1er compte admin) ────────────────────
 app.post('/admin/api/setup', async (req, res) => {
-  const count = db.get('SELECT COUNT(*) as n FROM admins');
-  if (count?.n > 0) return res.status(403).json({ error: 'Setup déjà effectué.' });
+  const count = await db.get('SELECT COUNT(*) as n FROM admins');
+  if (parseInt(count?.n || 0) > 0) return res.status(403).json({ error: 'Setup déjà effectué.' });
   const { nom, email, password } = req.body;
   if (!nom || !email || !password || password.length < 8)
     return res.status(400).json({ error: 'Nom, email et mot de passe (8 car. min) requis.' });
   const hash = await bcrypt.hash(password, 12);
-  db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
     nom.trim(), email.toLowerCase().trim(), hash, 'admin');
   res.json({ success: true });
 });
 
 // ─── GET /admin/api/devis/:id/history ────────────────────────────────────────
-app.get('/admin/api/devis/:id/history', requireAdminAuth, (req, res) => {
-  const rows = db.all('SELECT * FROM devis_history WHERE devis_id = ? ORDER BY created_at DESC', req.params.id);
+app.get('/admin/api/devis/:id/history', requireAdminAuth, async (req, res) => {
+  const rows = await db.all('SELECT * FROM devis_history WHERE devis_id = ? ORDER BY created_at DESC', req.params.id);
   res.json({ history: rows });
 });
 
 // ─── POST /admin/api/devis/:id/notes ─────────────────────────────────────────
-app.post('/admin/api/devis/:id/notes', requireAdminAuth, (req, res) => {
+app.post('/admin/api/devis/:id/notes', requireAdminAuth, async (req, res) => {
   const { notes } = req.body;
   if (!notes?.trim()) return res.status(400).json({ error: 'Note vide.' });
-  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
     req.params.id, 'note', req.admin.email, notes.trim());
   res.json({ success: true });
 });
 
 // ─── POST /admin/api/devis/:id/envoyer-email ──────────────────────────────────
 app.post('/admin/api/devis/:id/envoyer-email', requireAdminAuth, async (req, res) => {
-  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
   if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
   const { sujet, corps } = req.body;
   if (!sujet || !corps) return res.status(400).json({ error: 'Sujet et corps requis.' });
   try {
     await transporter.sendMail({ from: SMTP_FROM, to: d.email, subject: sujet, html: corps });
-    db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+    await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
       d.id, 'email_envoye', req.admin.email, `Sujet: ${sujet}`);
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: 'Erreur envoi email: ' + err.message }); }
 });
 
 // ─── GET /admin/api/email-templates ──────────────────────────────────────────
-app.get('/admin/api/email-templates', requireAdminAuth, (req, res) => {
-  res.json({ templates: db.all('SELECT * FROM email_templates ORDER BY type, nom') });
+app.get('/admin/api/email-templates', requireAdminAuth, async (req, res) => {
+  res.json({ templates: await db.all('SELECT * FROM email_templates ORDER BY type, nom') });
 });
 
 // ─── POST /admin/api/email-templates ─────────────────────────────────────────
-app.post('/admin/api/email-templates', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+app.post('/admin/api/email-templates', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
   const { nom, type, sujet, corps } = req.body;
   if (!nom || !sujet || !corps) return res.status(400).json({ error: 'Champs requis.' });
-  db.run('INSERT INTO email_templates (nom, type, sujet, corps) VALUES (?, ?, ?, ?)', nom, type || 'autre', sujet, corps);
+  await db.run('INSERT INTO email_templates (nom, type, sujet, corps) VALUES (?, ?, ?, ?)', nom, type || 'autre', sujet, corps);
   res.json({ success: true });
 });
 
 // ─── PUT /admin/api/email-templates/:id ──────────────────────────────────────
-app.put('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+app.put('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
   const { nom, type, sujet, corps } = req.body;
-  db.run("UPDATE email_templates SET nom=?, type=?, sujet=?, corps=?, updated_at=datetime('now') WHERE id=?", nom, type, sujet, corps, req.params.id);
+  await db.run('UPDATE email_templates SET nom=?, type=?, sujet=?, corps=?, updated_at=NOW() WHERE id=?', nom, type, sujet, corps, req.params.id);
   res.json({ success: true });
 });
 
 // ─── DELETE /admin/api/email-templates/:id ───────────────────────────────────
-app.delete('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
-  db.run('DELETE FROM email_templates WHERE id = ?', req.params.id);
+app.delete('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
+  await db.run('DELETE FROM email_templates WHERE id = ?', req.params.id);
   res.json({ success: true });
 });
 
 // ─── GET /admin/api/users ─────────────────────────────────────────────────────
-app.get('/admin/api/users', requireAdminAuth, (req, res) => {
+app.get('/admin/api/users', requireAdminAuth, async (req, res) => {
   const { q, limit = 50, offset = 0 } = req.query;
   let sql = 'SELECT id, prenom, nom, email, email_verifie, actif, created_at FROM users WHERE 1=1';
   const params = [];
-  if (q) { sql += ' AND (prenom LIKE ? OR nom LIKE ? OR email LIKE ?)'; const p = '%' + q + '%'; params.push(p, p, p); }
+  if (q) { sql += ' AND (prenom ILIKE ? OR nom ILIKE ? OR email ILIKE ?)'; const p = '%' + q + '%'; params.push(p, p, p); }
   sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
   params.push(parseInt(limit), parseInt(offset));
-  const total = db.get('SELECT COUNT(*) as n FROM users' + (q ? ' WHERE prenom LIKE ? OR nom LIKE ? OR email LIKE ?' : ''), ...(q ? ['%'+q+'%','%'+q+'%','%'+q+'%'] : []));
-  res.json({ users: db.all(sql, ...params), total: total?.n || 0 });
+  const total = await db.get('SELECT COUNT(*) as n FROM users' + (q ? ' WHERE prenom ILIKE ? OR nom ILIKE ? OR email ILIKE ?' : ''), ...(q ? ['%'+q+'%','%'+q+'%','%'+q+'%'] : []));
+  res.json({ users: await db.all(sql, ...params), total: parseInt(total?.n || 0) });
 });
 
 // ─── PATCH /admin/api/users/:id/status ───────────────────────────────────────
-app.patch('/admin/api/users/:id/status', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+app.patch('/admin/api/users/:id/status', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
   const { actif } = req.body;
-  db.run('UPDATE users SET actif = ? WHERE id = ?', actif ? 1 : 0, req.params.id);
+  await db.run('UPDATE users SET actif = ? WHERE id = ?', actif ? 1 : 0, req.params.id);
   res.json({ success: true });
 });
 
 // ─── GET /admin/api/newsletter ───────────────────────────────────────────────
-app.get('/admin/api/newsletter', requireAdminAuth, (req, res) => {
-  res.json({ campaigns: db.all('SELECT * FROM email_campaigns ORDER BY envoye_at DESC LIMIT 50') });
+app.get('/admin/api/newsletter', requireAdminAuth, async (req, res) => {
+  res.json({ campaigns: await db.all('SELECT * FROM email_campaigns ORDER BY envoye_at DESC LIMIT 50') });
 });
 
 // ─── POST /admin/api/newsletter ──────────────────────────────────────────────
 app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
   const { sujet, corps } = req.body;
   if (!sujet || !corps) return res.status(400).json({ error: 'Sujet et corps requis.' });
-  const users = db.all("SELECT email, prenom FROM users WHERE email_verifie=1 AND (actif IS NULL OR actif=1)");
+  const users = await db.all("SELECT email, prenom FROM users WHERE email_verifie=1 AND (actif IS NULL OR actif=1)");
   let sent = 0;
   for (const u of users) {
     const personalizedCorps = corps.replace(/\{\{prenom\}\}/g, u.prenom || 'Client');
@@ -1252,7 +1238,7 @@ app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), a
       sent++;
     } catch {}
   }
-  db.run('INSERT INTO email_campaigns (sujet, corps, destinataires, admin_email) VALUES (?, ?, ?, ?)',
+  await db.run('INSERT INTO email_campaigns (sujet, corps, destinataires, admin_email) VALUES (?, ?, ?, ?)',
     sujet, corps, sent, req.admin.email);
   res.json({ success: true, sent });
 });
@@ -1261,13 +1247,10 @@ app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), a
 
 const PORT = process.env.PORT || 3000;
 
-initSqlJs().then(async SQL => {
-  const buf = fs.existsSync(DB_PATH) ? fs.readFileSync(DB_PATH) : null;
-  _db = buf ? new SQL.Database(buf) : new SQL.Database();
-
-  _db.run(`
+async function startServer() {
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
-      id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+      id            SERIAL   PRIMARY KEY,
       prenom        TEXT     NOT NULL,
       nom           TEXT     NOT NULL,
       email         TEXT     UNIQUE NOT NULL,
@@ -1275,29 +1258,30 @@ initSqlJs().then(async SQL => {
       google_id     TEXT     UNIQUE,
       email_verifie INTEGER  DEFAULT 0,
       email_token   TEXT,
-      created_at    TEXT     DEFAULT (datetime('now'))
+      actif         INTEGER  DEFAULT 1,
+      created_at    TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS password_reset_tokens (
-      id         INTEGER  PRIMARY KEY AUTOINCREMENT,
-      user_id    INTEGER  NOT NULL,
-      token      TEXT     NOT NULL,
-      expires_at TEXT     NOT NULL,
-      used       INTEGER  DEFAULT 0,
-      created_at TEXT     DEFAULT (datetime('now'))
+      id         SERIAL      PRIMARY KEY,
+      user_id    INTEGER     NOT NULL,
+      token      TEXT        NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL,
+      used       INTEGER     DEFAULT 0,
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS commandes (
-      id          INTEGER  PRIMARY KEY AUTOINCREMENT,
-      user_id     INTEGER  NOT NULL,
-      reference   TEXT     NOT NULL,
-      description TEXT     NOT NULL,
-      montant     REAL     DEFAULT 0,
-      statut      TEXT     DEFAULT 'en_attente',
-      created_at  TEXT     DEFAULT (datetime('now'))
+      id          SERIAL      PRIMARY KEY,
+      user_id     INTEGER     NOT NULL,
+      reference   TEXT        NOT NULL,
+      description TEXT        NOT NULL,
+      montant     REAL        DEFAULT 0,
+      statut      TEXT        DEFAULT 'en_attente',
+      created_at  TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS devis (
-      id                INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom               TEXT    NOT NULL,
-      email             TEXT    NOT NULL,
+      id                SERIAL      PRIMARY KEY,
+      nom               TEXT        NOT NULL,
+      email             TEXT        NOT NULL,
       telephone         TEXT,
       date_evenement    TEXT,
       heure_evenement   TEXT,
@@ -1305,59 +1289,57 @@ initSqlJs().then(async SQL => {
       nombre_personnes  INTEGER,
       type_evenement    TEXT,
       details           TEXT,
-      statut            TEXT    DEFAULT 'en_attente',
+      statut            TEXT        DEFAULT 'en_attente',
       discord_valide_id TEXT,
       discord_refuse_id TEXT,
-      created_at        TEXT    DEFAULT (datetime('now')),
-      updated_at        TEXT    DEFAULT (datetime('now'))
+      created_at        TIMESTAMPTZ DEFAULT NOW(),
+      updated_at        TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS admins (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom           TEXT    NOT NULL,
-      email         TEXT    UNIQUE NOT NULL,
-      password_hash TEXT    NOT NULL,
-      role          TEXT    DEFAULT 'moderateur',
-      created_at    TEXT    DEFAULT (datetime('now'))
+      id            SERIAL      PRIMARY KEY,
+      nom           TEXT        NOT NULL,
+      email         TEXT        UNIQUE NOT NULL,
+      password_hash TEXT        NOT NULL,
+      role          TEXT        DEFAULT 'moderateur',
+      created_at    TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS site_logs (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      level      TEXT    NOT NULL,
-      message    TEXT    NOT NULL,
+      id         SERIAL      PRIMARY KEY,
+      level      TEXT        NOT NULL,
+      message    TEXT        NOT NULL,
       url        TEXT,
       method     TEXT,
       status     INTEGER,
       ip         TEXT,
       extra      TEXT,
-      created_at TEXT    DEFAULT (datetime('now'))
+      created_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS devis_history (
-      id          INTEGER PRIMARY KEY AUTOINCREMENT,
-      devis_id    INTEGER NOT NULL,
-      action      TEXT    NOT NULL,
+      id          SERIAL      PRIMARY KEY,
+      devis_id    INTEGER     NOT NULL,
+      action      TEXT        NOT NULL,
       admin_email TEXT,
       notes       TEXT,
-      created_at  TEXT    DEFAULT (datetime('now'))
+      created_at  TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS email_templates (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      nom        TEXT    NOT NULL,
-      type       TEXT    DEFAULT 'autre',
-      sujet      TEXT    NOT NULL,
-      corps      TEXT    NOT NULL,
-      created_at TEXT    DEFAULT (datetime('now')),
-      updated_at TEXT    DEFAULT (datetime('now'))
+      id         SERIAL      PRIMARY KEY,
+      nom        TEXT        NOT NULL,
+      type       TEXT        DEFAULT 'autre',
+      sujet      TEXT        NOT NULL,
+      corps      TEXT        NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
     );
     CREATE TABLE IF NOT EXISTS email_campaigns (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      sujet         TEXT    NOT NULL,
-      corps         TEXT    NOT NULL,
-      destinataires INTEGER DEFAULT 0,
-      envoye_at     TEXT    DEFAULT (datetime('now')),
+      id            SERIAL      PRIMARY KEY,
+      sujet         TEXT        NOT NULL,
+      corps         TEXT        NOT NULL,
+      destinataires INTEGER     DEFAULT 0,
+      envoye_at     TIMESTAMPTZ DEFAULT NOW(),
       admin_email   TEXT
     );
   `);
-  saveDb();
-  try { _db.run("ALTER TABLE users ADD COLUMN actif INTEGER DEFAULT 1"); saveDb(); } catch {}
 
   // ── Auto-seed comptes admin depuis ADMIN_ACCOUNTS (env var JSON) ──────────
   // Format : [{"nom":"Pascale","email":"...","password":"...","role":"admin"}]
@@ -1366,15 +1348,14 @@ initSqlJs().then(async SQL => {
       const accounts = JSON.parse(process.env.ADMIN_ACCOUNTS);
       for (const acc of accounts) {
         if (!acc.email || !acc.password || !acc.nom) continue;
-        const existing = db.get('SELECT id FROM admins WHERE email = ?', acc.email.toLowerCase().trim());
+        const existing = await db.get('SELECT id FROM admins WHERE email = ?', acc.email.toLowerCase().trim());
         if (!existing) {
           const hash = await bcrypt.hash(acc.password, 12);
-          db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+          await db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
             acc.nom.trim(), acc.email.toLowerCase().trim(), hash, acc.role || 'admin');
           console.log(`[Admin] Compte auto-créé : ${acc.email}`);
         }
       }
-      saveDb();
     } catch (e) {
       console.error('[Admin] Erreur auto-seed ADMIN_ACCOUNTS :', e.message);
     }
@@ -1383,7 +1364,9 @@ initSqlJs().then(async SQL => {
   app.listen(PORT, () => {
     console.log('zrevents06 -> http://localhost:' + PORT);
   });
-}).catch(err => {
+}
+
+startServer().catch(err => {
   console.error('Erreur init DB:', err);
   process.exit(1);
 });
