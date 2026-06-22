@@ -61,6 +61,11 @@ const pool = new Pool({
   ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
 });
 
+// Isoler les tables dans le schéma "zrevents" pour partager la DB avec d'autres services
+pool.on('connect', (client) => {
+  client.query('SET search_path TO zrevents, public').catch(() => {});
+});
+
 function toPositional(sql) {
   let i = 0;
   return sql.replace(/\?/g, () => `$${++i}`);
@@ -1248,6 +1253,10 @@ app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), a
 const PORT = process.env.PORT || 3000;
 
 async function startServer() {
+  // Créer le schéma dédié si inexistant (isolation vis-à-vis des autres services sur la même DB)
+  await pool.query('CREATE SCHEMA IF NOT EXISTS zrevents');
+  await pool.query('SET search_path TO zrevents, public');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
       id            SERIAL   PRIMARY KEY,

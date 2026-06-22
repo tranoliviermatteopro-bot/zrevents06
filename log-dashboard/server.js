@@ -17,6 +17,11 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+// Isoler les tables dans le schéma "logdashboard"
+pool.on('connect', (client) => {
+  client.query('SET search_path TO logdashboard, public').catch(() => {});
+});
+
 // ─── SECURITY HEADERS (Helmet) ────────────────────────────────────────────────
 
 app.use(helmet({
@@ -134,6 +139,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── DATABASE ────────────────────────────────────────────────────────────────
 
 async function initDB() {
+  await pool.query('CREATE SCHEMA IF NOT EXISTS logdashboard');
+  await pool.query('SET search_path TO logdashboard, public');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (
       id SERIAL PRIMARY KEY,
