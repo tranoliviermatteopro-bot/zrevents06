@@ -1261,7 +1261,7 @@ app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), a
 
 const PORT = process.env.PORT || 3000;
 
-initSqlJs().then(SQL => {
+initSqlJs().then(async SQL => {
   const buf = fs.existsSync(DB_PATH) ? fs.readFileSync(DB_PATH) : null;
   _db = buf ? new SQL.Database(buf) : new SQL.Database();
 
@@ -1358,6 +1358,27 @@ initSqlJs().then(SQL => {
   `);
   saveDb();
   try { _db.run("ALTER TABLE users ADD COLUMN actif INTEGER DEFAULT 1"); saveDb(); } catch {}
+
+  // ── Auto-seed comptes admin depuis ADMIN_ACCOUNTS (env var JSON) ──────────
+  // Format : [{"nom":"Pascale","email":"...","password":"...","role":"admin"}]
+  if (process.env.ADMIN_ACCOUNTS) {
+    try {
+      const accounts = JSON.parse(process.env.ADMIN_ACCOUNTS);
+      for (const acc of accounts) {
+        if (!acc.email || !acc.password || !acc.nom) continue;
+        const existing = db.get('SELECT id FROM admins WHERE email = ?', acc.email.toLowerCase().trim());
+        if (!existing) {
+          const hash = await bcrypt.hash(acc.password, 12);
+          db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+            acc.nom.trim(), acc.email.toLowerCase().trim(), hash, acc.role || 'admin');
+          console.log(`[Admin] Compte auto-créé : ${acc.email}`);
+        }
+      }
+      saveDb();
+    } catch (e) {
+      console.error('[Admin] Erreur auto-seed ADMIN_ACCOUNTS :', e.message);
+    }
+  }
 
   app.listen(PORT, () => {
     console.log('zrevents06 -> http://localhost:' + PORT);
