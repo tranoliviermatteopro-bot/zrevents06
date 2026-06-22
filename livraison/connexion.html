@@ -190,6 +190,23 @@ $('form-connexion').addEventListener('submit', async e => {
   btn.innerHTML = '<span class="spinner" aria-hidden="true"></span> Connexion…';
 
   try {
+    // ── Vérifier d'abord si c'est un compte admin ─────────────────────────────
+    const adminRes = await fetch('/admin/api/login', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ email: $('email').value.trim(), password: $('password').value }),
+    });
+    if (adminRes.ok) {
+      const adminJson = await adminRes.json();
+      if (adminJson.success) {
+        const el = $('alert-success');
+        el.textContent = `✓ Bonjour ${adminJson.admin.nom} ! Accès admin…`;
+        el.classList.add('show');
+        setTimeout(() => { location.href = '/admin/'; }, 800);
+        return;
+      }
+    }
+    // ── Login utilisateur classique ───────────────────────────────────────────
     const res  = await fetch('/api/connexion', {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
