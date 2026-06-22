@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Administration — zrevents06</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: #f1f5f9;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #1e293b;
+    }
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      padding: 48px 40px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.08), 0 4px 24px rgba(0,0,0,.06);
+    }
+    .logo {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+    .logo-mark {
+      width: 48px; height: 48px;
+      background: #1d4ed8;
+      border-radius: 12px;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 22px; margin-bottom: 12px;
+    }
+    .logo h1 { font-size: 20px; font-weight: 700; color: #1e293b; }
+    .logo p  { font-size: 13px; color: #64748b; margin-top: 2px; }
+    .form-group { margin-bottom: 18px; }
+    label { display: block; font-size: 13px; font-weight: 600; color: #374151; margin-bottom: 6px; }
+    input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 15px;
+      color: #1e293b;
+      background: #fff;
+      transition: border-color .15s, box-shadow .15s;
+      outline: none;
+    }
+    input:focus { border-color: #1d4ed8; box-shadow: 0 0 0 3px rgba(29,78,216,.12); }
+    .btn {
+      width: 100%;
+      padding: 11px;
+      background: #1d4ed8;
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .15s, opacity .15s;
+      margin-top: 8px;
+    }
+    .btn:hover { background: #1e40af; }
+    .btn:disabled { opacity: .6; cursor: not-allowed; }
+    .error {
+      display: none;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #dc2626;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-bottom: 18px;
+    }
+    .back {
+      text-align: center;
+      margin-top: 20px;
+      font-size: 13px;
+      color: #64748b;
+    }
+    .back a { color: #1d4ed8; text-decoration: none; }
+    .back a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo">
+      <div class="logo-mark">🍰</div>
+      <h1>Administration</h1>
+      <p>zrevents06 — Pâtisserie & Événements</p>
+    </div>
+    <div class="error" id="err"></div>
+    <div class="form-group">
+      <label for="email">Adresse e-mail</label>
+      <input type="email" id="email" placeholder="admin@exemple.com" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label for="password">Mot de passe</label>
+      <input type="password" id="password" placeholder="••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn" id="btn" onclick="login()">Se connecter</button>
+    <p class="back"><a href="/">← Retour au site</a></p>
+  </div>
+
+  <script>
+    // Redirect if already logged in
+    fetch('/admin/api/me').then(r => { if (r.ok) location.href = '/admin/dashboard.html'; });
+
+    document.addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+
+    async function login() {
+      const email    = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const errEl    = document.getElementById('err');
+      const btn      = document.getElementById('btn');
+      errEl.style.display = 'none';
+      if (!email || !password) { showErr('Veuillez remplir tous les champs.'); return; }
+      btn.disabled = true; btn.textContent = 'Connexion…';
+      try {
+        const r = await fetch('/admin/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        const data = await r.json();
+        if (!r.ok) { showErr(data.error || 'Erreur de connexion.'); return; }
+        location.href = '/admin/dashboard.html';
+      } catch { showErr('Erreur réseau. Réessayez.'); }
+      finally { btn.disabled = false; btn.textContent = 'Se connecter'; }
+    }
+
+    function showErr(msg) {
+      const el = document.getElementById('err');
+      el.textContent = msg; el.style.display = 'block';
+    }
+  </script>
+</body>
+</html>

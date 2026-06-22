@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard — zrevents06 Admin</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --blue: #1d4ed8; --blue-light: #eff6ff; --blue-hover: #1e40af;
+      --green: #10b981; --red: #ef4444; --yellow: #f59e0b;
+      --gray-50: #f8fafc; --gray-100: #f1f5f9; --gray-200: #e2e8f0;
+      --gray-400: #94a3b8; --gray-600: #475569; --gray-800: #1e293b;
+      --sidebar-w: 240px;
+    }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--gray-100); color: var(--gray-800); display: flex; min-height: 100vh; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: var(--sidebar-w); background: #fff; border-right: 1px solid var(--gray-200);
+      display: flex; flex-direction: column; position: fixed; top: 0; left: 0; height: 100vh; z-index: 10;
+    }
+    .sidebar-brand {
+      padding: 20px 20px 16px;
+      border-bottom: 1px solid var(--gray-200);
+    }
+    .sidebar-brand .mark { font-size: 18px; font-weight: 700; color: var(--gray-800); }
+    .sidebar-brand .sub  { font-size: 11px; color: var(--gray-400); margin-top: 2px; }
+    nav { flex: 1; padding: 12px 10px; overflow-y: auto; }
+    .nav-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--gray-400); padding: 12px 10px 6px; }
+    .nav-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 12px; border-radius: 8px; cursor: pointer;
+      font-size: 14px; color: var(--gray-600); font-weight: 500;
+      transition: background .12s, color .12s; user-select: none;
+    }
+    .nav-item:hover { background: var(--gray-100); color: var(--gray-800); }
+    .nav-item.active { background: var(--blue-light); color: var(--blue); font-weight: 600; }
+    .nav-item .icon { font-size: 16px; width: 20px; text-align: center; }
+    .badge-count { margin-left: auto; background: var(--yellow); color: #fff; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 999px; }
+    .sidebar-footer {
+      padding: 14px 16px; border-top: 1px solid var(--gray-200);
+      font-size: 13px;
+    }
+    .admin-info { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .admin-avatar { width: 32px; height: 32px; background: var(--blue); border-radius: 50%; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 13px; }
+    .admin-name { font-weight: 600; font-size: 13px; }
+    .admin-role { font-size: 11px; color: var(--gray-400); }
+    .btn-logout { width: 100%; padding: 7px; border: 1.5px solid var(--gray-200); background: #fff; border-radius: 8px; font-size: 13px; color: var(--gray-600); cursor: pointer; transition: .12s; }
+    .btn-logout:hover { background: #fef2f2; border-color: #fecaca; color: var(--red); }
+
+    /* ── Main ── */
+    #main { margin-left: var(--sidebar-w); flex: 1; display: flex; flex-direction: column; min-height: 100vh; }
+    #topbar {
+      background: #fff; border-bottom: 1px solid var(--gray-200);
+      padding: 0 28px; height: 56px; display: flex; align-items: center; justify-content: space-between;
+      position: sticky; top: 0; z-index: 5;
+    }
+    #page-title { font-size: 16px; font-weight: 700; color: var(--gray-800); }
+    .topbar-actions { display: flex; gap: 8px; }
+    .btn-sm {
+      padding: 7px 14px; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer;
+      border: 1.5px solid var(--gray-200); background: #fff; color: var(--gray-600); transition: .12s;
+    }
+    .btn-sm:hover { background: var(--gray-100); }
+    .btn-sm.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .btn-sm.primary:hover { background: var(--blue-hover); }
+
+    #content { padding: 28px; flex: 1; }
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* ── Cards stat ── */
+    .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
+    .stat-card {
+      background: #fff; border-radius: 12px; padding: 20px 22px;
+      border: 1px solid var(--gray-200);
+    }
+    .stat-card .label { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-400); margin-bottom: 8px; }
+    .stat-card .value { font-size: 32px; font-weight: 800; color: var(--gray-800); }
+    .stat-card .sub { font-size: 12px; color: var(--gray-400); margin-top: 4px; }
+    .stat-card.green .value { color: var(--green); }
+    .stat-card.red   .value { color: var(--red); }
+    .stat-card.yellow .value { color: var(--yellow); }
+
+    /* ── Chart ── */
+    .chart-card { background: #fff; border-radius: 12px; border: 1px solid var(--gray-200); padding: 22px; margin-bottom: 24px; }
+    .chart-card h2 { font-size: 15px; font-weight: 700; margin-bottom: 16px; }
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* ── Table ── */
+    .table-card { background: #fff; border-radius: 12px; border: 1px solid var(--gray-200); overflow: hidden; }
+    .table-header {
+      padding: 16px 20px; border-bottom: 1px solid var(--gray-200);
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .table-header h2 { font-size: 15px; font-weight: 700; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+    .filter-btn {
+      padding: 5px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;
+      border: 1.5px solid var(--gray-200); background: #fff; color: var(--gray-600); cursor: pointer; transition: .12s;
+    }
+    .filter-btn:hover, .filter-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .search-input {
+      padding: 7px 12px; border: 1.5px solid var(--gray-200); border-radius: 8px;
+      font-size: 13px; color: var(--gray-800); outline: none; width: 200px;
+    }
+    .search-input:focus { border-color: var(--blue); }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; padding: 11px 20px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--gray-400); background: var(--gray-50); border-bottom: 1px solid var(--gray-200); }
+    td { padding: 13px 20px; font-size: 14px; border-bottom: 1px solid var(--gray-100); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--gray-50); }
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 5px;
+      padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
+    }
+    .status-badge.en_attente { background: #fffbeb; color: #92400e; }
+    .status-badge.valide     { background: #ecfdf5; color: #065f46; }
+    .status-badge.refuse     { background: #fef2f2; color: #991b1b; }
+    .dot { width: 6px; height: 6px; border-radius: 50%; }
+    .dot.en_attente { background: var(--yellow); }
+    .dot.valide     { background: var(--green); }
+    .dot.refuse     { background: var(--red); }
+    .action-btn {
+      padding: 5px 11px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; border: none; transition: .12s;
+    }
+    .action-btn.green { background: #ecfdf5; color: #065f46; }
+    .action-btn.green:hover { background: var(--green); color: #fff; }
+    .action-btn.red   { background: #fef2f2; color: #991b1b; }
+    .action-btn.red:hover   { background: var(--red); color: #fff; }
+    .action-btn.blue  { background: var(--blue-light); color: var(--blue); }
+    .action-btn.blue:hover  { background: var(--blue); color: #fff; }
+    .empty { padding: 48px; text-align: center; color: var(--gray-400); font-size: 14px; }
+    .pagination { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 16px; border-top: 1px solid var(--gray-200); }
+    .page-btn { padding: 6px 12px; border: 1.5px solid var(--gray-200); background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .page-btn:hover { background: var(--gray-100); }
+    .page-btn.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+
+    /* ── Logs ── */
+    .log-list { padding: 0; }
+    .log-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px 20px; border-bottom: 1px solid var(--gray-100); font-size: 13px; }
+    .log-item:last-child { border-bottom: none; }
+    .log-level { font-size: 10px; font-weight: 700; text-transform: uppercase; padding: 2px 8px; border-radius: 4px; flex-shrink: 0; margin-top: 2px; }
+    .log-level.error   { background: #fef2f2; color: var(--red); }
+    .log-level.warning { background: #fffbeb; color: var(--yellow); }
+    .log-level.info    { background: #eff6ff; color: var(--blue); }
+    .log-msg  { flex: 1; color: var(--gray-800); }
+    .log-time { font-size: 12px; color: var(--gray-400); flex-shrink: 0; }
+
+    /* ── Modal devis ── */
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 100; align-items: center; justify-content: center; }
+    .overlay.open { display: flex; }
+    .modal { background: #fff; border-radius: 16px; width: 580px; max-width: 95vw; max-height: 90vh; overflow-y: auto; padding: 28px; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+    .modal-header h3 { font-size: 18px; font-weight: 700; }
+    .modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--gray-400); }
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .detail-field label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--gray-400); display: block; margin-bottom: 4px; }
+    .detail-field p { font-size: 14px; color: var(--gray-800); background: var(--gray-50); padding: 9px 12px; border-radius: 8px; border: 1px solid var(--gray-200); }
+    .full { grid-column: 1 / -1; }
+    .modal-actions { display: flex; gap: 10px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--gray-200); flex-wrap: wrap; }
+    .modal-btn { padding: 9px 18px; border-radius: 8px; font-size: 14px; font-weight: 600; cursor: pointer; border: none; transition: .12s; }
+    .modal-btn.green { background: var(--green); color: #fff; }
+    .modal-btn.green:hover { background: #059669; }
+    .modal-btn.red   { background: var(--red); color: #fff; }
+    .modal-btn.red:hover   { background: #dc2626; }
+    .modal-btn.gray  { background: var(--gray-100); color: var(--gray-600); }
+    .modal-btn.gray:hover  { background: var(--gray-200); }
+    .modal-btn.blue  { background: var(--blue); color: #fff; }
+    .modal-btn.blue:hover  { background: var(--blue-hover); }
+
+    /* ── Admins ── */
+    .admin-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; background: var(--gray-50); padding: 18px; border-radius: 10px; border: 1px solid var(--gray-200); margin-bottom: 20px; }
+    .admin-form input, .admin-form select {
+      width: 100%; padding: 8px 12px; border: 1.5px solid var(--gray-200); border-radius: 7px; font-size: 14px; outline: none;
+    }
+    .admin-form input:focus, .admin-form select:focus { border-color: var(--blue); }
+    .admin-form .full { grid-column: 1 / -1; }
+    .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .6s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .toast { position: fixed; bottom: 24px; right: 24px; background: #1e293b; color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14px; font-weight: 500; z-index: 200; opacity: 0; transform: translateY(8px); transition: .25s; pointer-events: none; }
+    .toast.show { opacity: 1; transform: none; }
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<aside id="sidebar">
+  <div class="sidebar-brand">
+    <div class="mark">🍰 zrevents06</div>
+    <div class="sub">Panneau d'administration</div>
+  </div>
+  <nav>
+    <div class="nav-label">Principal</div>
+    <div class="nav-item active" onclick="goto('overview')"><span class="icon">📊</span> Tableau de bord</div>
+    <div class="nav-item" onclick="goto('devis')"><span class="icon">📋</span> Devis <span class="badge-count" id="badge-attente" style="display:none">0</span></div>
+    <div class="nav-label">Monitoring</div>
+    <div class="nav-item" onclick="goto('logs')"><span class="icon">🔍</span> Logs du site</div>
+    <div class="nav-label">Paramètres</div>
+    <div class="nav-item admin-only" onclick="goto('admins')"><span class="icon">👥</span> Équipe</div>
+  </nav>
+  <div class="sidebar-footer">
+    <div class="admin-info">
+      <div class="admin-avatar" id="admin-avatar">?</div>
+      <div>
+        <div class="admin-name" id="admin-name">…</div>
+        <div class="admin-role" id="admin-role">…</div>
+      </div>
+    </div>
+    <button class="btn-logout" onclick="logout()">Se déconnecter</button>
+  </div>
+</aside>
+
+<!-- Main -->
+<div id="main">
+  <div id="topbar">
+    <span id="page-title">Tableau de bord</span>
+    <div class="topbar-actions" id="topbar-actions"></div>
+  </div>
+  <div id="content">
+
+    <!-- ── Section : Tableau de bord ── -->
+    <div class="section active" id="s-overview">
+      <div class="stat-grid">
+        <div class="stat-card"><div class="label">Total devis</div><div class="value" id="st-total">—</div><div class="sub">depuis le début</div></div>
+        <div class="stat-card yellow"><div class="label">En attente</div><div class="value" id="st-attente">—</div><div class="sub">à traiter</div></div>
+        <div class="stat-card green"><div class="label">Validés</div><div class="value" id="st-valide">—</div></div>
+        <div class="stat-card red"><div class="label">Refusés</div><div class="value" id="st-refuse">—</div></div>
+      </div>
+      <div class="chart-card">
+        <h2>Devis par mois</h2>
+        <div class="chart-wrap"><canvas id="chart-mois"></canvas></div>
+      </div>
+      <div class="stat-grid" style="grid-template-columns:1fr 1fr">
+        <div class="stat-card red"><div class="label">Erreurs (logs)</div><div class="value" id="st-errors">—</div></div>
+        <div class="stat-card yellow"><div class="label">Warnings (logs)</div><div class="value" id="st-warnings">—</div></div>
+      </div>
+    </div>
+
+    <!-- ── Section : Devis ── -->
+    <div class="section" id="s-devis">
+      <div class="table-card">
+        <div class="table-header">
+          <h2>Demandes de devis</h2>
+          <div class="filters">
+            <button class="filter-btn active" onclick="filterDevis('')" id="f-all">Tous</button>
+            <button class="filter-btn" onclick="filterDevis('en_attente')" id="f-attente">En attente</button>
+            <button class="filter-btn" onclick="filterDevis('valide')" id="f-valide">Validés</button>
+            <button class="filter-btn" onclick="filterDevis('refuse')" id="f-refuse">Refusés</button>
+          </div>
+          <input class="search-input" id="devis-search" placeholder="🔍 Rechercher…" oninput="searchDevis(this.value)">
+        </div>
+        <div id="devis-table-wrap">
+          <div class="empty">Chargement…</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Section : Logs ── -->
+    <div class="section" id="s-logs">
+      <div class="table-card">
+        <div class="table-header">
+          <h2>Logs du site</h2>
+          <div class="filters">
+            <button class="filter-btn active" onclick="filterLogs('')" id="lf-all">Tous</button>
+            <button class="filter-btn" onclick="filterLogs('error')" id="lf-error">Erreurs</button>
+            <button class="filter-btn" onclick="filterLogs('warning')" id="lf-warn">Warnings</button>
+            <button class="filter-btn" onclick="filterLogs('info')" id="lf-info">Info</button>
+          </div>
+          <button class="btn-sm" onclick="loadLogs()">↻ Actualiser</button>
+        </div>
+        <div class="log-list" id="logs-list"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Section : Équipe ── -->
+    <div class="section" id="s-admins">
+      <div class="table-card" style="margin-bottom:20px">
+        <div class="table-header"><h2>Ajouter un membre</h2></div>
+        <div style="padding:20px">
+          <div class="admin-form">
+            <input id="a-nom" placeholder="Nom complet">
+            <input id="a-email" type="email" placeholder="E-mail">
+            <input id="a-pass" type="password" placeholder="Mot de passe (8 car. min)">
+            <select id="a-role"><option value="moderateur">Modérateur</option><option value="admin">Administrateur</option></select>
+            <div class="full"><button class="btn-sm primary" onclick="addAdmin()">Ajouter le membre</button></div>
+          </div>
+        </div>
+      </div>
+      <div class="table-card">
+        <div class="table-header"><h2>Membres de l'équipe</h2></div>
+        <div id="admins-table-wrap"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- Modal devis detail -->
+<div class="overlay" id="modal-overlay" onclick="closeModal(event)">
+  <div class="modal" id="modal-content"></div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ── Auth check ──
+let me = null;
+let devisFilter = '', devisSearch = '', logsFilter = '';
+let devisOffset = 0; const LIMIT = 20;
+let chartInstance = null;
+
+async function init() {
+  const r = await fetch('/admin/api/me');
+  if (!r.ok) { location.href = '/admin/login.html'; return; }
+  const data = await r.json();
+  me = data.admin;
+  document.getElementById('admin-name').textContent = me.nom;
+  document.getElementById('admin-role').textContent = me.role === 'admin' ? 'Administrateur' : 'Modérateur';
+  document.getElementById('admin-avatar').textContent = me.nom[0].toUpperCase();
+  if (me.role !== 'admin') document.querySelectorAll('.admin-only').forEach(el => el.style.display = 'none');
+  loadStats();
+}
+
+// ── Navigation ──
+function goto(page) {
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
+  const navMap = { overview: 0, devis: 1, logs: 3, admins: 5 };
+  document.querySelectorAll('.nav-item')[navMap[page]]?.classList.add('active');
+  document.getElementById('s-' + page).classList.add('active');
+  const titles = { overview: 'Tableau de bord', devis: 'Gestion des devis', logs: 'Logs du site', admins: 'Équipe' };
+  document.getElementById('page-title').textContent = titles[page] || page;
+  // Topbar actions
+  const actions = document.getElementById('topbar-actions');
+  actions.innerHTML = '';
+  if (page === 'devis') {
+    loadDevis();
+  } else if (page === 'overview') {
+    loadStats();
+  } else if (page === 'logs') {
+    loadLogs();
+  } else if (page === 'admins') {
+    loadAdmins();
+  }
+}
+
+// ── Stats ──
+async function loadStats() {
+  const r = await fetch('/admin/api/stats');
+  if (!r.ok) return;
+  const { devis, parMois, logs } = await r.json();
+  document.getElementById('st-total').textContent   = devis.total;
+  document.getElementById('st-attente').textContent = devis.en_attente;
+  document.getElementById('st-valide').textContent  = devis.valide;
+  document.getElementById('st-refuse').textContent  = devis.refuse;
+  document.getElementById('st-errors').textContent   = logs.errors;
+  document.getElementById('st-warnings').textContent = logs.warnings;
+  if (devis.en_attente > 0) {
+    const b = document.getElementById('badge-attente');
+    b.textContent = devis.en_attente; b.style.display = '';
+  }
+  // Chart
+  if (chartInstance) chartInstance.destroy();
+  const ctx = document.getElementById('chart-mois').getContext('2d');
+  chartInstance = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels: parMois.map(m => m.mois),
+      datasets: [
+        { label: 'Total', data: parMois.map(m => m.total), backgroundColor: '#dbeafe', borderColor: '#1d4ed8', borderWidth: 2, borderRadius: 6 },
+        { label: 'Validés', data: parMois.map(m => m.valide), backgroundColor: '#d1fae5', borderColor: '#10b981', borderWidth: 2, borderRadius: 6 },
+      ]
+    },
+    options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { beginAtZero: true, ticks: { precision: 0 } } } }
+  });
+}
+
+// ── Devis ──
+function filterDevis(f) {
+  devisFilter = f; devisOffset = 0;
+  ['all','attente','valide','refuse'].forEach(id => document.getElementById('f-'+id)?.classList.remove('active'));
+  document.getElementById('f-' + (f || 'all'))?.classList.add('active');
+  loadDevis();
+}
+let searchTimer;
+function searchDevis(v) { clearTimeout(searchTimer); devisSearch = v; devisOffset = 0; searchTimer = setTimeout(loadDevis, 300); }
+
+async function loadDevis() {
+  const wrap = document.getElementById('devis-table-wrap');
+  wrap.innerHTML = '<div class="empty">Chargement…</div>';
+  const params = new URLSearchParams({ limit: LIMIT, offset: devisOffset });
+  if (devisFilter) params.set('statut', devisFilter);
+  if (devisSearch) params.set('q', devisSearch);
+  const r = await fetch('/admin/api/devis?' + params);
+  const { devis, total } = await r.json();
+  if (!devis.length) { wrap.innerHTML = '<div class="empty">Aucun devis trouvé.</div>'; return; }
+  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' };
+  wrap.innerHTML = `
+    <table>
+      <thead><tr>
+        <th>#</th><th>Client</th><th>Email</th><th>Événement</th><th>Date</th><th>Statut</th><th>Actions</th>
+      </tr></thead>
+      <tbody>
+        ${devis.map(d => `
+          <tr>
+            <td style="color:var(--gray-400);font-size:12px">#${d.id}</td>
+            <td style="font-weight:600">${esc(d.nom)}</td>
+            <td style="color:var(--gray-600)">${esc(d.email)}</td>
+            <td>${esc(d.type_evenement || '—')}</td>
+            <td style="color:var(--gray-400);font-size:12px">${d.date_evenement || '—'}</td>
+            <td><span class="status-badge ${d.statut}"><span class="dot ${d.statut}"></span>${statusLabel[d.statut]}</span></td>
+            <td style="display:flex;gap:6px;flex-wrap:wrap">
+              <button class="action-btn blue" onclick="openDevis(${d.id})">Voir</button>
+              ${d.statut !== 'valide'  ? `<button class="action-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
+              ${d.statut !== 'refuse'  ? `<button class="action-btn red"   onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
+            </td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div class="pagination">
+      ${devisOffset > 0 ? `<button class="page-btn" onclick="pageDevis(-1)">← Précédent</button>` : ''}
+      <span style="font-size:13px;color:var(--gray-400)">${devisOffset+1}–${Math.min(devisOffset+LIMIT, total)} sur ${total}</span>
+      ${devisOffset + LIMIT < total ? `<button class="page-btn" onclick="pageDevis(1)">Suivant →</button>` : ''}
+    </div>
+  `;
+}
+function pageDevis(dir) { devisOffset = Math.max(0, devisOffset + dir * LIMIT); loadDevis(); }
+
+async function actionDevis(id, action) {
+  if (!confirm(`Confirmer : ${action} le devis #${id} ?`)) return;
+  const r = await fetch(`/admin/api/devis/${id}/${action}`, { method: 'POST' });
+  const data = await r.json();
+  if (!r.ok) { toast(data.error, true); return; }
+  toast(`Devis #${id} ${action === 'valider' ? 'validé' : 'refusé'} ✓`);
+  loadDevis(); loadStats();
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+async function openDevis(id) {
+  const r = await fetch(`/admin/api/devis/${id}`);
+  const { devis: d } = await r.json();
+  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' };
+  document.getElementById('modal-content').innerHTML = `
+    <div class="modal-header">
+      <h3>Devis #${d.id} — ${esc(d.nom)}</h3>
+      <button class="modal-close" onclick="document.getElementById('modal-overlay').classList.remove('open')">×</button>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-field"><label>Client</label><p>${esc(d.nom)}</p></div>
+      <div class="detail-field"><label>Statut</label><p>${statusLabel[d.statut]}</p></div>
+      <div class="detail-field"><label>Email</label><p>${esc(d.email)}</p></div>
+      <div class="detail-field"><label>Téléphone</label><p>${esc(d.telephone || '—')}</p></div>
+      <div class="detail-field"><label>Type d'événement</label><p>${esc(d.type_evenement || '—')}</p></div>
+      <div class="detail-field"><label>Nombre de personnes</label><p>${d.nombre_personnes || '—'}</p></div>
+      <div class="detail-field"><label>Date</label><p>${d.date_evenement || '—'}</p></div>
+      <div class="detail-field"><label>Heure</label><p>${d.heure_evenement || '—'}</p></div>
+      <div class="detail-field"><label>Lieu</label><p>${esc(d.lieu || '—')}</p></div>
+      <div class="detail-field"><label>Reçu le</label><p>${new Date(d.created_at).toLocaleDateString('fr-FR')}</p></div>
+      <div class="detail-field full"><label>Détails / Message</label><p style="white-space:pre-wrap;min-height:60px">${esc(d.details || '—')}</p></div>
+    </div>
+    <div class="modal-actions">
+      ${d.statut !== 'valide' ? `<button class="modal-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
+      ${d.statut !== 'refuse' ? `<button class="modal-btn red"   onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
+      <button class="modal-btn blue" onclick="window.open('/admin/api/devis/${d.id}/print','_blank')">🖨 Imprimer / PDF</button>
+      <button class="modal-btn gray" onclick="document.getElementById('modal-overlay').classList.remove('open')">Fermer</button>
+    </div>
+  `;
+  document.getElementById('modal-overlay').classList.add('open');
+}
+function closeModal(e) { if (e.target === document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open'); }
+
+// ── Logs ──
+function filterLogs(f) {
+  logsFilter = f;
+  ['all','error','warn','info'].forEach(id => document.getElementById('lf-'+id)?.classList.remove('active'));
+  document.getElementById('lf-' + (f === 'warning' ? 'warn' : (f || 'all')))?.classList.add('active');
+  loadLogs();
+}
+
+async function loadLogs() {
+  const wrap = document.getElementById('logs-list');
+  wrap.innerHTML = '<div class="empty">Chargement…</div>';
+  const params = new URLSearchParams({ limit: 150 });
+  if (logsFilter) params.set('level', logsFilter);
+  const r = await fetch('/admin/api/logs?' + params);
+  const { logs } = await r.json();
+  if (!logs.length) { wrap.innerHTML = '<div class="empty">Aucun log trouvé.</div>'; return; }
+  wrap.innerHTML = logs.map(l => `
+    <div class="log-item">
+      <span class="log-level ${l.level}">${l.level}</span>
+      <span class="log-msg">${esc(l.message)}${l.url ? ` <span style="color:var(--gray-400);font-size:12px">${esc(l.method||'')} ${esc(l.url)}</span>` : ''}</span>
+      <span class="log-time">${new Date(l.created_at).toLocaleString('fr-FR')}</span>
+    </div>
+  `).join('');
+}
+
+// ── Admins ──
+async function loadAdmins() {
+  const wrap = document.getElementById('admins-table-wrap');
+  const r = await fetch('/admin/api/admins');
+  if (!r.ok) { wrap.innerHTML = '<div class="empty">Accès refusé.</div>'; return; }
+  const { admins } = await r.json();
+  wrap.innerHTML = `<table>
+    <thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th>Ajouté le</th><th></th></tr></thead>
+    <tbody>${admins.map(a => `
+      <tr>
+        <td style="font-weight:600">${esc(a.nom)}</td>
+        <td style="color:var(--gray-600)">${esc(a.email)}</td>
+        <td><span class="status-badge ${a.role === 'admin' ? 'valide' : 'en_attente'}">${a.role === 'admin' ? 'Admin' : 'Modérateur'}</span></td>
+        <td style="color:var(--gray-400);font-size:12px">${new Date(a.created_at).toLocaleDateString('fr-FR')}</td>
+        <td>${a.id !== me.id ? `<button class="action-btn red" onclick="removeAdmin(${a.id},'${esc(a.nom)}')">Supprimer</button>` : '<span style="color:var(--gray-400);font-size:12px">Vous</span>'}</td>
+      </tr>
+    `).join('')}</tbody>
+  </table>`;
+}
+
+async function addAdmin() {
+  const nom = document.getElementById('a-nom').value.trim();
+  const email = document.getElementById('a-email').value.trim();
+  const password = document.getElementById('a-pass').value;
+  const role = document.getElementById('a-role').value;
+  if (!nom || !email || !password) { toast('Tous les champs sont requis.', true); return; }
+  const r = await fetch('/admin/api/admins', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ nom, email, password, role }),
+  });
+  const data = await r.json();
+  if (!r.ok) { toast(data.error, true); return; }
+  toast(`${nom} ajouté ✓`);
+  ['a-nom','a-email','a-pass'].forEach(id => document.getElementById(id).value = '');
+  loadAdmins();
+}
+
+async function removeAdmin(id, nom) {
+  if (!confirm(`Supprimer ${nom} ?`)) return;
+  await fetch(`/admin/api/admins/${id}`, { method: 'DELETE' });
+  toast(`${nom} supprimé`); loadAdmins();
+}
+
+// ── Logout ──
+async function logout() {
+  await fetch('/admin/api/logout', { method: 'POST' });
+  location.href = '/admin/login.html';
+}
+
+// ── Utils ──
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+let toastTimer;
+function toast(msg, error = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.style.background = error ? '#dc2626' : '#1e293b';
+  el.classList.add('show'); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+init();
+</script>
+</body>
+</html>
