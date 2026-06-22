@@ -604,10 +604,14 @@ async function loadDashboard() {
     <div class="stat-card red"><div class="label">Refusés</div><div class="value">${stats.devis.refuse}</div></div>
   `;
 
-  // Chart
+  // Chart (optionnel — Chart.js peut être indisponible)
   const labels = stats.parMois.map(m => m.mois);
   const totals = stats.parMois.map(m => m.total);
   const valides = stats.parMois.map(m => m.valide);
+  const chartEl = document.getElementById('devisChart');
+  if (typeof Chart === 'undefined' || !chartEl) {
+    if (chartEl) chartEl.parentElement.innerHTML = '<p style="color:var(--muted);text-align:center;padding:20px">Graphique indisponible</p>';
+  } else {
   if (chartInstance) chartInstance.destroy();
   chartInstance = new Chart(document.getElementById('devisChart'), {
     type: 'bar',
@@ -623,6 +627,7 @@ async function loadDashboard() {
       scales: { x: { ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } }, y: { ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } } }
     }
   });
+  } // end if Chart defined
 
   // Recent devis
   document.getElementById('recent-devis-wrap').innerHTML = renderDevisTable(devisData.devis, false);
@@ -951,7 +956,7 @@ async function createDefaultTemplates() {
       corps: `<p>Bonjour {{prenom}},</p><p>Nous avons le plaisir de vous informer que votre devis a été <strong>validé</strong>. Notre équipe prend contact avec vous très prochainement pour finaliser les détails.</p><p>Merci de votre confiance,<br>L'équipe zrevents06</p>` },
     { nom: 'Refus de devis', type: 'refus', sujet: 'Concernant votre demande de devis — zrevents06',
       corps: `<p>Bonjour {{prenom}},</p><p>Après étude de votre demande, nous sommes au regret de ne pouvoir donner suite à votre devis pour le moment. Nous restons disponibles pour toute autre demande future.</p><p>Cordialement,<br>L'équipe zrevents06</p>` },
-    { nom: 'Demande d'informations complémentaires', type: 'info', sujet: 'Votre devis — informations complémentaires',
+    { nom: "Demande d'informations complémentaires", type: 'info', sujet: 'Votre devis — informations complémentaires',
       corps: `<p>Bonjour {{prenom}},</p><p>Afin de finaliser votre devis, nous aurions besoin de quelques informations supplémentaires concernant votre événement (date précise, nombre de convives, lieu, allergies alimentaires éventuelles).</p><p>Merci de nous répondre dès que possible.</p><p>Cordialement,<br>L'équipe zrevents06</p>` },
     { nom: 'Relance devis', type: 'relance', sujet: 'Rappel — Votre demande de devis zrevents06',
       corps: `<p>Bonjour {{prenom}},</p><p>Nous souhaitions vous rappeler que votre demande de devis est toujours en cours de traitement. Si vous avez des questions ou souhaitez modifier votre demande, n'hésitez pas à nous contacter.</p><p>À bientôt,<br>L'équipe zrevents06</p>` },
