@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>zrevents06 — Administration</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f0f11;
+    --surface: #18181b;
+    --surface2: #27272a;
+    --border: #3f3f46;
+    --accent: #c8853a;
+    --accent-light: #e6a055;
+    --text: #f4f4f5;
+    --muted: #a1a1aa;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --info: #3b82f6;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  a { color: var(--accent); text-decoration: none; }
+
+  /* ── Login ── */
+  #login-page {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 24px;
+  }
+  .login-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 48px 40px; width: 100%; max-width: 420px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.6);
+  }
+  .login-logo { text-align: center; margin-bottom: 32px; }
+  .login-logo .emoji { font-size: 48px; display: block; margin-bottom: 8px; }
+  .login-logo h1 { font-size: 1.5rem; font-weight: 700; color: var(--accent); }
+  .login-logo p { color: var(--muted); font-size: 0.85rem; margin-top: 4px; }
+  .form-group { margin-bottom: 18px; }
+  .form-group label { display: block; font-size: 0.8rem; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .05em; }
+  .form-group input, .form-group select, .form-group textarea {
+    width: 100%; background: var(--surface2); border: 1px solid var(--border);
+    color: var(--text); border-radius: 8px; padding: 10px 14px; font-size: 0.95rem;
+    transition: border-color .2s;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    outline: none; border-color: var(--accent);
+  }
+  .form-group textarea { resize: vertical; min-height: 100px; font-family: inherit; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 10px 18px; border-radius: 8px; border: none; cursor: pointer;
+    font-size: 0.875rem; font-weight: 600; transition: all .2s; font-family: inherit;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-light); }
+  .btn-success { background: var(--success); color: #fff; }
+  .btn-success:hover { opacity: .85; }
+  .btn-danger { background: var(--danger); color: #fff; }
+  .btn-danger:hover { opacity: .85; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm { padding: 6px 12px; font-size: 0.8rem; }
+  .btn-full { width: 100%; justify-content: center; }
+
+  /* ── App ── */
+  #app { display: none; flex-direction: column; min-height: 100vh; }
+
+  /* ── Topbar ── */
+  .topbar {
+    background: var(--surface); border-bottom: 1px solid var(--border);
+    padding: 0 24px; display: flex; align-items: center; gap: 8px;
+    height: 60px; position: sticky; top: 0; z-index: 100;
+  }
+  .topbar-brand { font-size: 1.1rem; font-weight: 700; color: var(--accent); margin-right: 8px; white-space: nowrap; }
+  .topbar-nav { display: flex; gap: 2px; flex: 1; }
+  .nav-btn {
+    background: none; border: none; color: var(--muted); padding: 8px 14px;
+    border-radius: 8px; cursor: pointer; font-size: 0.875rem; font-weight: 500;
+    font-family: inherit; transition: all .2s; white-space: nowrap;
+  }
+  .nav-btn:hover { color: var(--text); background: var(--surface2); }
+  .nav-btn.active { color: var(--accent); background: rgba(200,133,58,.12); }
+  .topbar-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  .topbar-user { color: var(--muted); font-size: 0.85rem; white-space: nowrap; }
+
+  /* ── Main ── */
+  .main { flex: 1; padding: 28px 24px; max-width: 1400px; margin: 0 auto; width: 100%; }
+
+  /* ── Section ── */
+  .section { display: none; }
+  .section.active { display: block; }
+  .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .section-title { font-size: 1.5rem; font-weight: 700; }
+
+  /* ── Cards ── */
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+  .stat-card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+    padding: 20px 24px;
+  }
+  .stat-card .label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }
+  .stat-card .value { font-size: 2rem; font-weight: 700; }
+  .stat-card.orange .value { color: var(--accent); }
+  .stat-card.yellow .value { color: var(--warning); }
+  .stat-card.green .value { color: var(--success); }
+  .stat-card.red .value { color: var(--danger); }
+
+  /* ── Table ── */
+  .table-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--surface2); text-align: left; padding: 12px 16px; font-size: 0.78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
+  td { padding: 12px 16px; font-size: 0.875rem; border-top: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: rgba(255,255,255,.025); }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+  .badge-warning { background: rgba(245,158,11,.15); color: var(--warning); }
+  .badge-success { background: rgba(34,197,94,.15); color: var(--success); }
+  .badge-danger { background: rgba(239,68,68,.15); color: var(--danger); }
+  .badge-info { background: rgba(59,130,246,.15); color: var(--info); }
+  .badge-muted { background: var(--surface2); color: var(--muted); }
+
+  /* ── Filters ── */
+  .filters { display: flex; gap: 10px; flex-wrap: wrap; }
+  .filters input, .filters select {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    border-radius: 8px; padding: 8px 12px; font-size: 0.875rem; font-family: inherit;
+  }
+  .filters input:focus, .filters select:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Pagination ── */
+  .pagination { display: flex; align-items: center; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+  .pagination span { font-size: 0.85rem; color: var(--muted); }
+
+  /* ── Chart ── */
+  .chart-wrap { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 28px; }
+  .chart-wrap h3 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+
+  /* ── Modal ── */
+  .modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7); z-index: 1000;
+    display: flex; align-items: center; justify-content: center; padding: 24px;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+  }
+  .modal-overlay.open { opacity: 1; pointer-events: all; }
+  .modal {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
+    padding: 28px; width: 100%; max-width: 700px; max-height: 90vh; overflow-y: auto;
+    transform: translateY(20px); transition: transform .2s;
+    position: relative;
+  }
+  .modal-overlay.open .modal { transform: translateY(0); }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
+  .modal-title { font-size: 1.2rem; font-weight: 700; }
+  .modal-close { background: none; border: none; color: var(--muted); font-size: 1.4rem; cursor: pointer; line-height: 1; padding: 4px; }
+  .modal-close:hover { color: var(--text); }
+
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 20px; }
+  .tab-btn {
+    background: none; border: none; color: var(--muted); padding: 10px 16px;
+    font-family: inherit; font-size: 0.875rem; font-weight: 500; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all .2s;
+  }
+  .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-btn:hover:not(.active) { color: var(--text); }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* ── Timeline ── */
+  .timeline { list-style: none; position: relative; }
+  .timeline::before { content: ''; position: absolute; left: 11px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .timeline li { position: relative; padding: 0 0 16px 32px; }
+  .timeline li::before { content: ''; position: absolute; left: 4px; top: 4px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface2); border: 2px solid var(--border); }
+  .timeline li.valide::before { border-color: var(--success); background: rgba(34,197,94,.15); }
+  .timeline li.refuse::before { border-color: var(--danger); background: rgba(239,68,68,.15); }
+  .timeline li.note::before { border-color: var(--info); background: rgba(59,130,246,.15); }
+  .timeline li.email_envoye::before { border-color: var(--accent); background: rgba(200,133,58,.15); }
+  .timeline .tl-action { font-size: 0.8rem; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+  .timeline .tl-note { font-size: 0.875rem; color: var(--text); margin-top: 4px; }
+  .timeline .tl-meta { font-size: 0.75rem; color: var(--muted); margin-top: 3px; }
+
+  /* ── Toast ── */
+  #toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+  .toast {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 18px; font-size: 0.875rem; max-width: 320px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.4);
+    animation: slideIn .3s ease; border-left: 4px solid var(--border);
+  }
+  .toast.success { border-left-color: var(--success); }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.info { border-left-color: var(--info); }
+  @keyframes slideIn { from { transform: translateX(120%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+  @keyframes fadeOut { to { opacity: 0; transform: translateX(120%); } }
+
+  /* ── Spinner ── */
+  .spinner { display: inline-block; width: 20px; height: 20px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-wrap { display: flex; align-items: center; justify-content: center; padding: 48px; }
+
+  /* ── Inline form ── */
+  .inline-form { background: var(--surface2); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-top: 16px; }
+  .inline-form h4 { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+
+  /* ── Misc ── */
+  .empty { text-align: center; padding: 48px; color: var(--muted); }
+  .empty .emoji { font-size: 2.5rem; display: block; margin-bottom: 12px; }
+  .text-muted { color: var(--muted); }
+  .mt-16 { margin-top: 16px; }
+  .mt-24 { margin-top: 24px; }
+  .detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .detail-field label { font-size: 0.75rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; display: block; margin-bottom: 4px; }
+  .detail-field p { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; font-size: 0.875rem; }
+  .detail-field.full { grid-column: 1 / -1; }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div id="login-page">
+  <div class="login-card">
+    <div class="login-logo">
+      <span class="emoji">🎂</span>
+      <h1>zrevents06</h1>
+      <p>Panneau d'administration</p>
+    </div>
+    <div id="login-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.875rem;color:var(--danger);"></div>
+    <form id="login-form">
+      <div class="form-group">
+        <label>Adresse e-mail</label>
+        <input type="email" id="login-email" placeholder="admin@exemple.com" required>
+      </div>
+      <div class="form-group">
+        <label>Mot de passe</label>
+        <input type="password" id="login-password" placeholder="••••••••" required>
+      </div>
+      <button type="submit" class="btn btn-primary btn-full" id="login-btn">
+        Se connecter
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <!-- Topbar -->
+  <div class="topbar">
+    <div class="topbar-brand">🎂 zrevents06 Admin</div>
+    <nav class="topbar-nav">
+      <button class="nav-btn active" onclick="showSection('dashboard')">Dashboard</button>
+      <button class="nav-btn" onclick="showSection('devis')">Devis</button>
+      <button class="nav-btn" onclick="showSection('emails')">E-mails</button>
+      <button class="nav-btn" onclick="showSection('users')">Utilisateurs</button>
+      <button class="nav-btn" onclick="showSection('team')">Équipe</button>
+    </nav>
+    <div class="topbar-right">
+      <span class="topbar-user" id="topbar-user"></span>
+      <button class="btn btn-secondary btn-sm" onclick="logout()">Déconnexion</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- Dashboard -->
+    <div id="section-dashboard" class="section active">
+      <div class="section-header">
+        <h2 class="section-title">Dashboard</h2>
+        <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">↻ Actualiser</button>
+      </div>
+      <div class="cards-grid" id="stats-cards">
+        <div class="loading-wrap"><div class="spinner"></div></div>
+      </div>
+      <div class="chart-wrap">
+        <h3>Devis par mois</h3>
+        <canvas id="devisChart" height="80"></canvas>
+      </div>
+      <div>
+        <h3 style="margin-bottom:12px;font-size:1rem;font-weight:600;">5 derniers devis</h3>
+        <div class="table-wrap" id="recent-devis-wrap">
+          <div class="loading-wrap"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Devis -->
+    <div id="section-devis" class="section">
+      <div class="section-header">
+        <h2 class="section-title">Devis</h2>
+        <div class="filters">
+          <select id="devis-filter-statut" onchange="loadDevis()">
+            <option value="">Tous les statuts</option>
+            <option value="en_attente">En attente</option>
+            <option value="valide">Validés</option>
+            <option value="refuse">Refusés</option>
+          </select>
+          <input type="text" id="devis-filter-q" placeholder="Rechercher…" oninput="debounce(loadDevis,400)()">
+        </div>
+      </div>
+      <div class="table-wrap" id="devis-table-wrap">
+        <div class="loading-wrap"><div class="spinner"></div></div>
+      </div>
+      <div class="pagination" id="devis-pagination"></div>
+    </div>
+
+    <!-- Emails -->
+    <div id="section-emails" class="section">
+      <div class="section-header">
+        <h2 class="section-title">E-mails & Templates</h2>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="showNewTemplateForm()">+ Nouveau template</button>
+          <button class="btn btn-secondary" onclick="openNewsletterModal()">📨 Newsletter</button>
+        </div>
+      </div>
+      <div id="new-template-form-wrap" style="display:none;" class="inline-form">
+        <h4 id="template-form-title">Nouveau template</h4>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nom</label>
+            <input type="text" id="tpl-nom" placeholder="Nom du template">
+          </div>
+          <div class="form-group">
+            <label>Type</label>
+            <select id="tpl-type">
+              <option value="bienvenue">Bienvenue</option>
+              <option value="validation">Validation devis</option>
+              <option value="refus">Refus devis</option>
+              <option value="relance">Relance</option>
+              <option value="info">Demande d'infos</option>
+              <option value="partenariat">Partenariat</option>
+              <option value="nouveautes">Nouveautés</option>
+              <option value="promotionnel">Promotionnel</option>
+              <option value="newsletter">Newsletter</option>
+              <option value="autre">Autre</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Sujet</label>
+          <input type="text" id="tpl-sujet" placeholder="Objet de l'e-mail">
+        </div>
+        <div class="form-group">
+          <label>Corps (HTML accepté, {{prenom}} sera remplacé)</label>
+          <textarea id="tpl-corps" rows="6" placeholder="Contenu du mail…"></textarea>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="saveTemplate()">Enregistrer</button>
+          <button class="btn btn-secondary" onclick="hideNewTemplateForm()">Annuler</button>
+        </div>
+      </div>
+      <div class="table-wrap mt-16" id="templates-table-wrap">
+        <div class="loading-wrap"><div class="spinner"></div></div>
+      </div>
+      <div class="mt-24">
+        <h3 style="font-size:1rem;font-weight:600;margin-bottom:12px;">Historique des campagnes</h3>
+        <div class="table-wrap" id="campaigns-table-wrap">
+          <div class="loading-wrap"><div class="spinner"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Users -->
+    <div id="section-users" class="section">
+      <div class="section-header">
+        <h2 class="section-title">Utilisateurs</h2>
+        <div class="filters">
+          <input type="text" id="users-filter-q" placeholder="Rechercher…" oninput="debounce(loadUsers,400)()">
+        </div>
+      </div>
+      <div class="table-wrap" id="users-table-wrap">
+        <div class="loading-wrap"><div class="spinner"></div></div>
+      </div>
+      <div class="pagination" id="users-pagination"></div>
+    </div>
+
+    <!-- Team -->
+    <div id="section-team" class="section">
+      <div class="section-header">
+        <h2 class="section-title">Équipe Admin</h2>
+      </div>
+      <div class="table-wrap" id="team-table-wrap">
+        <div class="loading-wrap"><div class="spinner"></div></div>
+      </div>
+      <div class="inline-form mt-24">
+        <h4>Ajouter un administrateur</h4>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Nom complet</label>
+            <input type="text" id="new-admin-nom" placeholder="Jean Dupont">
+          </div>
+          <div class="form-group">
+            <label>Adresse e-mail</label>
+            <input type="email" id="new-admin-email" placeholder="jean@exemple.com">
+          </div>
+          <div class="form-group">
+            <label>Mot de passe</label>
+            <input type="password" id="new-admin-password" placeholder="Min. 8 caractères">
+          </div>
+          <div class="form-group">
+            <label>Rôle</label>
+            <select id="new-admin-role">
+              <option value="moderateur">Modérateur</option>
+              <option value="admin">Administrateur</option>
+            </select>
+          </div>
+        </div>
+        <button class="btn btn-primary" onclick="addAdmin()">Ajouter l'administrateur</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal devis -->
+<div class="modal-overlay" id="devis-modal">
+  <div class="modal" style="max-width:760px;">
+    <div class="modal-header">
+      <h3 class="modal-title" id="devis-modal-title">Devis</h3>
+      <button class="modal-close" onclick="closeModal('devis-modal')">✕</button>
+    </div>
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('devis-tab', 'details')">Détails</button>
+      <button class="tab-btn" onclick="switchTab('devis-tab', 'history')">Historique</button>
+      <button class="tab-btn" onclick="switchTab('devis-tab', 'email')">Envoyer e-mail</button>
+    </div>
+    <div id="devis-tab-details" class="tab-panel active"></div>
+    <div id="devis-tab-history" class="tab-panel"></div>
+    <div id="devis-tab-email" class="tab-panel"></div>
+  </div>
+</div>
+
+<!-- Modal newsletter -->
+<div class="modal-overlay" id="newsletter-modal">
+  <div class="modal" style="max-width:640px;">
+    <div class="modal-header">
+      <h3 class="modal-title">Envoyer une newsletter</h3>
+      <button class="modal-close" onclick="closeModal('newsletter-modal')">✕</button>
+    </div>
+    <div class="form-group">
+      <label>Template (optionnel)</label>
+      <select id="nl-template" onchange="loadNlTemplate()">
+        <option value="">— Saisie libre —</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Sujet</label>
+      <input type="text" id="nl-sujet" placeholder="Objet de la newsletter">
+    </div>
+    <div class="form-group">
+      <label>Corps (HTML, {{prenom}} sera personnalisé)</label>
+      <textarea id="nl-corps" rows="8"></textarea>
+    </div>
+    <div id="nl-send-info" style="font-size:0.8rem;color:var(--muted);margin-bottom:12px;">
+      Sera envoyé à tous les utilisateurs avec e-mail vérifié et actifs.
+    </div>
+    <button class="btn btn-primary" onclick="sendNewsletter()">📨 Envoyer la newsletter</button>
+  </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────────
+let currentAdmin = null;
+let devisOffset = 0;
+let usersOffset = 0;
+let editingTemplateId = null;
+let currentDevisId = null;
+let chartInstance = null;
+let debounceTimers = {};
+
+// ─── API Helper ───────────────────────────────────────────────────────────────
+async function apiFetch(url, opts = {}) {
+  const defaults = { credentials: 'include', headers: { 'Content-Type': 'application/json' } };
+  const options = { ...defaults, ...opts, headers: { ...defaults.headers, ...(opts.headers || {}) } };
+  if (opts.body && typeof opts.body === 'object') options.body = JSON.stringify(opts.body);
+  const res = await fetch(url, options);
+  if (res.status === 401) { showLogin(); return null; }
+  return res;
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function toast(msg, type = 'info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + type;
+  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+  el.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+  document.getElementById('toast-container').appendChild(el);
+  setTimeout(() => {
+    el.style.animation = 'fadeOut .3s ease forwards';
+    setTimeout(() => el.remove(), 300);
+  }, 4000);
+}
+
+// ─── Modal ────────────────────────────────────────────────────────────────────
+function openModal(id) { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// ─── Tabs ─────────────────────────────────────────────────────────────────────
+function switchTab(tabGroup, tabName) {
+  document.querySelectorAll(`[id^="${tabGroup}-"]`).forEach(p => p.classList.remove('active'));
+  document.getElementById(tabGroup + '-' + tabName).classList.add('active');
+  const modal = document.getElementById('devis-modal');
+  modal.querySelectorAll('.tab-btn').forEach((b, i) => {
+    b.classList.toggle('active', ['details','history','email'][i] === tabName);
+  });
+  if (tabName === 'history' && currentDevisId) loadDevisHistory(currentDevisId);
+  if (tabName === 'email' && currentDevisId) loadEmailTab(currentDevisId);
+}
+
+// ─── Debounce ─────────────────────────────────────────────────────────────────
+function debounce(fn, delay) {
+  return function(...args) {
+    const key = fn.name || 'fn';
+    clearTimeout(debounceTimers[key]);
+    debounceTimers[key] = setTimeout(() => fn.apply(this, args), delay);
+  };
+}
+
+// ─── Auth ─────────────────────────────────────────────────────────────────────
+function showLogin() {
+  document.getElementById('login-page').style.display = 'flex';
+  document.getElementById('app').style.display = 'none';
+}
+
+function showApp() {
+  document.getElementById('login-page').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+}
+
+async function init() {
+  const res = await apiFetch('/admin/api/me');
+  if (!res || !res.ok) { showLogin(); return; }
+  const data = await res.json();
+  currentAdmin = data.admin;
+  document.getElementById('topbar-user').textContent = currentAdmin.nom || currentAdmin.email;
+  showApp();
+  loadDashboard();
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('login-btn');
+  const errEl = document.getElementById('login-error');
+  errEl.style.display = 'none';
+  btn.textContent = 'Connexion…';
+  btn.disabled = true;
+  const res = await fetch('/admin/api/login', {
+    method: 'POST', credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: document.getElementById('login-email').value, password: document.getElementById('login-password').value }),
+  });
+  const data = await res.json();
+  btn.textContent = 'Se connecter';
+  btn.disabled = false;
+  if (!res.ok) { errEl.textContent = data.error || 'Erreur de connexion.'; errEl.style.display = 'block'; return; }
+  currentAdmin = data.admin;
+  document.getElementById('topbar-user').textContent = currentAdmin.nom || currentAdmin.email;
+  showApp();
+  loadDashboard();
+});
+
+async function logout() {
+  await apiFetch('/admin/api/logout', { method: 'POST' });
+  showLogin();
+}
+
+// ─── Navigation ───────────────────────────────────────────────────────────────
+function showSection(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('section-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.textContent.toLowerCase().includes(name === 'dashboard' ? 'dashboard' : name === 'devis' ? 'devis' : name === 'emails' ? 'e-mail' : name === 'users' ? 'util' : 'équipe')) {
+      b.classList.add('active');
+    }
+  });
+  if (name === 'dashboard') loadDashboard();
+  else if (name === 'devis') { devisOffset = 0; loadDevis(); }
+  else if (name === 'emails') loadEmails();
+  else if (name === 'users') { usersOffset = 0; loadUsers(); }
+  else if (name === 'team') loadTeam();
+}
+
+// ─── Dashboard ────────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const [statsRes, devisRes] = await Promise.all([
+    apiFetch('/admin/api/stats'),
+    apiFetch('/admin/api/devis?limit=5&offset=0'),
+  ]);
+  if (!statsRes || !devisRes) return;
+  const stats = await statsRes.json();
+  const devisData = await devisRes.json();
+
+  document.getElementById('stats-cards').innerHTML = `
+    <div class="stat-card orange"><div class="label">Total devis</div><div class="value">${stats.devis.total}</div></div>
+    <div class="stat-card yellow"><div class="label">En attente</div><div class="value">${stats.devis.en_attente}</div></div>
+    <div class="stat-card green"><div class="label">Validés</div><div class="value">${stats.devis.valide}</div></div>
+    <div class="stat-card red"><div class="label">Refusés</div><div class="value">${stats.devis.refuse}</div></div>
+  `;
+
+  // Chart
+  const labels = stats.parMois.map(m => m.mois);
+  const totals = stats.parMois.map(m => m.total);
+  const valides = stats.parMois.map(m => m.valide);
+  if (chartInstance) chartInstance.destroy();
+  chartInstance = new Chart(document.getElementById('devisChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Total', data: totals, backgroundColor: 'rgba(200,133,58,.4)', borderColor: 'rgba(200,133,58,.8)', borderWidth: 2, borderRadius: 4 },
+        { label: 'Validés', data: valides, backgroundColor: 'rgba(34,197,94,.3)', borderColor: 'rgba(34,197,94,.7)', borderWidth: 2, borderRadius: 4 },
+      ]
+    },
+    options: {
+      responsive: true, plugins: { legend: { labels: { color: '#a1a1aa' } } },
+      scales: { x: { ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } }, y: { ticks: { color: '#a1a1aa' }, grid: { color: '#3f3f46' } } }
+    }
+  });
+
+  // Recent devis
+  document.getElementById('recent-devis-wrap').innerHTML = renderDevisTable(devisData.devis, false);
+}
+
+// ─── Devis ────────────────────────────────────────────────────────────────────
+async function loadDevis() {
+  const statut = document.getElementById('devis-filter-statut').value;
+  const q = document.getElementById('devis-filter-q').value;
+  let url = `/admin/api/devis?limit=50&offset=${devisOffset}`;
+  if (statut) url += '&statut=' + statut;
+  if (q) url += '&q=' + encodeURIComponent(q);
+  document.getElementById('devis-table-wrap').innerHTML = '<div class="loading-wrap"><div class="spinner"></div></div>';
+  const res = await apiFetch(url);
+  if (!res) return;
+  const data = await res.json();
+  document.getElementById('devis-table-wrap').innerHTML = renderDevisTable(data.devis, true);
+  renderDevisPagination(data.total);
+}
+
+function renderDevisTable(devis, withActions) {
+  if (!devis || !devis.length) return '<div class="empty"><span class="emoji">📭</span>Aucun devis trouvé</div>';
+  return `<table>
+    <thead><tr>
+      <th>#</th><th>Client</th><th>Email</th><th>Événement</th><th>Date</th><th>Statut</th>${withActions ? '<th>Actions</th>' : ''}
+    </tr></thead>
+    <tbody>
+    ${devis.map(d => `<tr>
+      <td>${d.id}</td>
+      <td>${esc(d.nom)}</td>
+      <td>${esc(d.email)}</td>
+      <td>${esc(d.type_evenement || '—')}</td>
+      <td>${esc(d.date_evenement || '—')}</td>
+      <td>${statusBadge(d.statut)}</td>
+      ${withActions ? `<td><div class="actions">
+        <button class="btn btn-sm btn-secondary" onclick="openDevisModal(${d.id})">Voir</button>
+        ${d.statut !== 'valide' ? `<button class="btn btn-sm btn-success" onclick="validerDevis(${d.id})">✓</button>` : ''}
+        ${d.statut !== 'refuse' ? `<button class="btn btn-sm btn-danger" onclick="refuserDevis(${d.id})">✗</button>` : ''}
+      </div></td>` : ''}
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderDevisPagination(total) {
+  const pages = Math.ceil(total / 50);
+  const current = Math.floor(devisOffset / 50) + 1;
+  const el = document.getElementById('devis-pagination');
+  if (pages <= 1) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <span>${total} devis — Page ${current}/${pages}</span>
+    <button class="btn btn-secondary btn-sm" onclick="devisOffset=Math.max(0,devisOffset-50);loadDevis()" ${current===1?'disabled':''}>← Préc.</button>
+    <button class="btn btn-secondary btn-sm" onclick="devisOffset+=50;loadDevis()" ${current===pages?'disabled':''}>Suiv. →</button>
+  `;
+}
+
+async function validerDevis(id) {
+  if (!confirm('Valider ce devis ?')) return;
+  const res = await apiFetch(`/admin/api/devis/${id}/valider`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) { toast('Devis validé !', 'success'); loadDevis(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+async function refuserDevis(id) {
+  if (!confirm('Refuser ce devis ?')) return;
+  const res = await apiFetch(`/admin/api/devis/${id}/refuser`, { method: 'POST' });
+  if (!res) return;
+  if (res.ok) { toast('Devis refusé.', 'success'); loadDevis(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+async function openDevisModal(id) {
+  currentDevisId = id;
+  // Reset tabs
+  switchTab('devis-tab', 'details');
+  document.getElementById('devis-modal-title').textContent = 'Devis #' + id;
+  openModal('devis-modal');
+
+  const res = await apiFetch(`/admin/api/devis/${id}`);
+  if (!res) return;
+  const { devis: d } = await res.json();
+
+  document.getElementById('devis-tab-details').innerHTML = `
+    <div class="detail-grid">
+      <div class="detail-field"><label>Client</label><p>${esc(d.nom)}</p></div>
+      <div class="detail-field"><label>Email</label><p>${esc(d.email)}</p></div>
+      <div class="detail-field"><label>Téléphone</label><p>${esc(d.telephone || '—')}</p></div>
+      <div class="detail-field"><label>Type d'événement</label><p>${esc(d.type_evenement || '—')}</p></div>
+      <div class="detail-field"><label>Date</label><p>${esc(d.date_evenement || '—')}</p></div>
+      <div class="detail-field"><label>Heure</label><p>${esc(d.heure_evenement || '—')}</p></div>
+      <div class="detail-field"><label>Lieu</label><p>${esc(d.lieu || '—')}</p></div>
+      <div class="detail-field"><label>Nombre de personnes</label><p>${esc(d.nombre_personnes || '—')}</p></div>
+      <div class="detail-field full"><label>Détails / Message</label><p style="white-space:pre-wrap;min-height:60px">${esc(d.details || '—')}</p></div>
+      <div class="detail-field"><label>Statut</label><p>${statusBadge(d.statut)}</p></div>
+      <div class="detail-field"><label>Reçu le</label><p>${new Date(d.created_at).toLocaleString('fr-FR')}</p></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:20px;flex-wrap:wrap;">
+      ${d.statut !== 'valide' ? `<button class="btn btn-success" onclick="validerDevis(${d.id});closeModal('devis-modal');loadDevis()">✓ Valider</button>` : ''}
+      ${d.statut !== 'refuse' ? `<button class="btn btn-danger" onclick="refuserDevis(${d.id});closeModal('devis-modal');loadDevis()">✗ Refuser</button>` : ''}
+      <a class="btn btn-secondary" href="/admin/api/devis/${d.id}/print" target="_blank">🖨️ Imprimer</a>
+    </div>
+  `;
+}
+
+async function loadDevisHistory(id) {
+  document.getElementById('devis-tab-history').innerHTML = '<div class="loading-wrap"><div class="spinner"></div></div>';
+  const res = await apiFetch(`/admin/api/devis/${id}/history`);
+  if (!res) return;
+  const { history } = await res.json();
+  const actionLabel = { valide: '✅ Validé', refuse: '❌ Refusé', note: '📝 Note', email_envoye: '📧 Email envoyé' };
+  const histHtml = history.length ? `<ul class="timeline">${history.map(h => `
+    <li class="${h.action}">
+      <div class="tl-action">${actionLabel[h.action] || h.action}</div>
+      ${h.notes ? `<div class="tl-note">${esc(h.notes)}</div>` : ''}
+      <div class="tl-meta">${h.admin_email || ''} — ${new Date(h.created_at).toLocaleString('fr-FR')}</div>
+    </li>`).join('')}</ul>` : '<p class="text-muted" style="padding:16px 0;">Aucun historique pour ce devis.</p>';
+
+  document.getElementById('devis-tab-history').innerHTML = `
+    ${histHtml}
+    <div class="inline-form mt-16">
+      <h4>Ajouter une note</h4>
+      <div class="form-group">
+        <textarea id="note-text" rows="3" placeholder="Votre note…"></textarea>
+      </div>
+      <button class="btn btn-primary" onclick="addNote(${id})">Ajouter la note</button>
+    </div>
+  `;
+}
+
+async function addNote(id) {
+  const notes = document.getElementById('note-text').value;
+  const res = await apiFetch(`/admin/api/devis/${id}/notes`, { method: 'POST', body: { notes } });
+  if (!res) return;
+  if (res.ok) { toast('Note ajoutée !', 'success'); loadDevisHistory(id); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+async function loadEmailTab(id) {
+  const res = await apiFetch('/admin/api/email-templates');
+  if (!res) return;
+  const { templates } = await res.json();
+  document.getElementById('devis-tab-email').innerHTML = `
+    <div class="form-group">
+      <label>Template (optionnel)</label>
+      <select id="email-tpl-select" onchange="applyDevisTpl()">
+        <option value="">— Saisie libre —</option>
+        ${templates.map(t => `<option value="${t.id}" data-sujet="${esc(t.sujet)}" data-corps="${esc(t.corps).replace(/"/g,'&quot;')}">${esc(t.nom)}</option>`).join('')}
+      </select>
+    </div>
+    <div class="form-group">
+      <label>Sujet</label>
+      <input type="text" id="email-sujet" placeholder="Objet du message">
+    </div>
+    <div class="form-group">
+      <label>Corps</label>
+      <textarea id="email-corps" rows="7"></textarea>
+    </div>
+    <button class="btn btn-primary" onclick="sendDevisEmail(${id})">📧 Envoyer l'e-mail</button>
+  `;
+}
+
+function applyDevisTpl() {
+  const sel = document.getElementById('email-tpl-select');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.value) return;
+  document.getElementById('email-sujet').value = opt.dataset.sujet || '';
+  document.getElementById('email-corps').value = opt.dataset.corps || '';
+}
+
+async function sendDevisEmail(id) {
+  const sujet = document.getElementById('email-sujet').value;
+  const corps = document.getElementById('email-corps').value;
+  const res = await apiFetch(`/admin/api/devis/${id}/envoyer-email`, { method: 'POST', body: { sujet, corps } });
+  if (!res) return;
+  if (res.ok) { toast('E-mail envoyé !', 'success'); }
+  else { const d = await res.json(); toast(d.error || 'Erreur envoi', 'error'); }
+}
+
+// ─── Emails ───────────────────────────────────────────────────────────────────
+async function loadEmails() {
+  const [tplRes, campRes] = await Promise.all([
+    apiFetch('/admin/api/email-templates'),
+    apiFetch('/admin/api/newsletter'),
+  ]);
+  if (!tplRes || !campRes) return;
+  const { templates } = await tplRes.json();
+  const { campaigns } = await campRes.json();
+
+  // Auto-create default templates if none
+  if (!templates.length) {
+    await createDefaultTemplates();
+    loadEmails();
+    return;
+  }
+
+  renderTemplatesTable(templates);
+  renderCampaignsTable(campaigns);
+}
+
+function renderTemplatesTable(templates) {
+  if (!templates.length) {
+    document.getElementById('templates-table-wrap').innerHTML = '<div class="empty"><span class="emoji">📄</span>Aucun template</div>';
+    return;
+  }
+  document.getElementById('templates-table-wrap').innerHTML = `<table>
+    <thead><tr><th>Nom</th><th>Type</th><th>Sujet</th><th>Actions</th></tr></thead>
+    <tbody>
+    ${templates.map(t => `<tr>
+      <td>${esc(t.nom)}</td>
+      <td><span class="badge badge-info">${esc(t.type)}</span></td>
+      <td>${esc(t.sujet)}</td>
+      <td><div class="actions">
+        <button class="btn btn-sm btn-secondary" onclick="editTemplate(${t.id},'${esc(t.nom).replace(/'/g,"\\'")}','${esc(t.type)}','${esc(t.sujet).replace(/'/g,"\\'")}',\`${t.corps.replace(/`/g,'\\`').replace(/\$/g,'\\$')}\`)">Modifier</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteTemplate(${t.id})">Supprimer</button>
+      </div></td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function renderCampaignsTable(campaigns) {
+  if (!campaigns.length) {
+    document.getElementById('campaigns-table-wrap').innerHTML = '<div class="empty"><span class="emoji">📭</span>Aucune campagne envoyée</div>';
+    return;
+  }
+  document.getElementById('campaigns-table-wrap').innerHTML = `<table>
+    <thead><tr><th>Date</th><th>Sujet</th><th>Destinataires</th><th>Envoyé par</th></tr></thead>
+    <tbody>
+    ${campaigns.map(c => `<tr>
+      <td>${new Date(c.envoye_at).toLocaleString('fr-FR')}</td>
+      <td>${esc(c.sujet)}</td>
+      <td><span class="badge badge-success">${c.destinataires} envois</span></td>
+      <td>${esc(c.admin_email || '—')}</td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+function showNewTemplateForm() {
+  editingTemplateId = null;
+  document.getElementById('template-form-title').textContent = 'Nouveau template';
+  document.getElementById('tpl-nom').value = '';
+  document.getElementById('tpl-type').value = 'autre';
+  document.getElementById('tpl-sujet').value = '';
+  document.getElementById('tpl-corps').value = '';
+  document.getElementById('new-template-form-wrap').style.display = 'block';
+}
+
+function hideNewTemplateForm() {
+  document.getElementById('new-template-form-wrap').style.display = 'none';
+  editingTemplateId = null;
+}
+
+function editTemplate(id, nom, type, sujet, corps) {
+  editingTemplateId = id;
+  document.getElementById('template-form-title').textContent = 'Modifier le template';
+  document.getElementById('tpl-nom').value = nom;
+  document.getElementById('tpl-type').value = type;
+  document.getElementById('tpl-sujet').value = sujet;
+  document.getElementById('tpl-corps').value = corps;
+  document.getElementById('new-template-form-wrap').style.display = 'block';
+  document.getElementById('new-template-form-wrap').scrollIntoView({ behavior: 'smooth' });
+}
+
+async function saveTemplate() {
+  const nom = document.getElementById('tpl-nom').value;
+  const type = document.getElementById('tpl-type').value;
+  const sujet = document.getElementById('tpl-sujet').value;
+  const corps = document.getElementById('tpl-corps').value;
+  if (!nom || !sujet || !corps) { toast('Remplissez tous les champs obligatoires.', 'error'); return; }
+  let res;
+  if (editingTemplateId) {
+    res = await apiFetch(`/admin/api/email-templates/${editingTemplateId}`, { method: 'PUT', body: { nom, type, sujet, corps } });
+  } else {
+    res = await apiFetch('/admin/api/email-templates', { method: 'POST', body: { nom, type, sujet, corps } });
+  }
+  if (!res) return;
+  if (res.ok) { toast(editingTemplateId ? 'Template modifié !' : 'Template créé !', 'success'); hideNewTemplateForm(); loadEmails(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Supprimer ce template ?')) return;
+  const res = await apiFetch(`/admin/api/email-templates/${id}`, { method: 'DELETE' });
+  if (!res) return;
+  if (res.ok) { toast('Template supprimé.', 'success'); loadEmails(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+async function openNewsletterModal() {
+  const res = await apiFetch('/admin/api/email-templates');
+  if (!res) return;
+  const { templates } = await res.json();
+  const sel = document.getElementById('nl-template');
+  sel.innerHTML = '<option value="">— Saisie libre —</option>' + templates.map(t => `<option value="${t.id}" data-sujet="${esc(t.sujet)}" data-corps="${esc(t.corps).replace(/"/g,'&quot;')}">${esc(t.nom)}</option>`).join('');
+  openModal('newsletter-modal');
+}
+
+function loadNlTemplate() {
+  const sel = document.getElementById('nl-template');
+  const opt = sel.options[sel.selectedIndex];
+  if (!opt.value) return;
+  document.getElementById('nl-sujet').value = opt.dataset.sujet || '';
+  document.getElementById('nl-corps').value = opt.dataset.corps || '';
+}
+
+async function sendNewsletter() {
+  const sujet = document.getElementById('nl-sujet').value;
+  const corps = document.getElementById('nl-corps').value;
+  if (!sujet || !corps) { toast('Sujet et corps requis.', 'error'); return; }
+  if (!confirm('Envoyer la newsletter à tous les abonnés actifs ?')) return;
+  const res = await apiFetch('/admin/api/newsletter', { method: 'POST', body: { sujet, corps } });
+  if (!res) return;
+  const data = await res.json();
+  if (res.ok) { toast(`Newsletter envoyée à ${data.sent} destinataire(s) !`, 'success'); closeModal('newsletter-modal'); loadEmails(); }
+  else { toast(data.error || 'Erreur envoi', 'error'); }
+}
+
+// ─── Default templates ────────────────────────────────────────────────────────
+async function createDefaultTemplates() {
+  const defaults = [
+    { nom: 'Bienvenue nouveau client', type: 'bienvenue', sujet: 'Bienvenue chez zrevents06, {{prenom}} !',
+      corps: `<p>Bonjour {{prenom}},</p><p>Nous sommes ravis de vous compter parmi nos clients. Chez <strong>zrevents06</strong>, nous mettons tout notre savoir-faire au service de vos événements les plus précieux.</p><p>N'hésitez pas à nous contacter pour tout projet de pâtisserie ou d'événementiel.</p><p>À très bientôt,<br>L'équipe zrevents06</p>` },
+    { nom: 'Validation de devis', type: 'validation', sujet: 'Votre devis a été validé — zrevents06',
+      corps: `<p>Bonjour {{prenom}},</p><p>Nous avons le plaisir de vous informer que votre devis a été <strong>validé</strong>. Notre équipe prend contact avec vous très prochainement pour finaliser les détails.</p><p>Merci de votre confiance,<br>L'équipe zrevents06</p>` },
+    { nom: 'Refus de devis', type: 'refus', sujet: 'Concernant votre demande de devis — zrevents06',
+      corps: `<p>Bonjour {{prenom}},</p><p>Après étude de votre demande, nous sommes au regret de ne pouvoir donner suite à votre devis pour le moment. Nous restons disponibles pour toute autre demande future.</p><p>Cordialement,<br>L'équipe zrevents06</p>` },
+    { nom: 'Demande d'informations complémentaires', type: 'info', sujet: 'Votre devis — informations complémentaires',
+      corps: `<p>Bonjour {{prenom}},</p><p>Afin de finaliser votre devis, nous aurions besoin de quelques informations supplémentaires concernant votre événement (date précise, nombre de convives, lieu, allergies alimentaires éventuelles).</p><p>Merci de nous répondre dès que possible.</p><p>Cordialement,<br>L'équipe zrevents06</p>` },
+    { nom: 'Relance devis', type: 'relance', sujet: 'Rappel — Votre demande de devis zrevents06',
+      corps: `<p>Bonjour {{prenom}},</p><p>Nous souhaitions vous rappeler que votre demande de devis est toujours en cours de traitement. Si vous avez des questions ou souhaitez modifier votre demande, n'hésitez pas à nous contacter.</p><p>À bientôt,<br>L'équipe zrevents06</p>` },
+    { nom: 'Proposition de partenariat', type: 'partenariat', sujet: 'Proposition de partenariat — zrevents06',
+      corps: `<p>Bonjour,</p><p>Nous serions ravis d'explorer une collaboration avec vous. zrevents06 propose des créations pâtissières haut de gamme pour tous types d'événements. Nos réalisations sur mesure s'adaptent à chaque univers et chaque ambiance.</p><p>Seriez-vous disponible pour un échange ?</p><p>Cordialement,<br>L'équipe zrevents06</p>` },
+    { nom: 'Nouveaux produits', type: 'nouveautes', sujet: 'Découvrez nos nouvelles créations — zrevents06',
+      corps: `<p>Bonjour {{prenom}},</p><p>Notre équipe de pâtissiers vient de finaliser de nouvelles créations exclusives. Des saveurs raffinées, des associations audacieuses et des présentations soignées vous attendent.</p><p>Rendez-vous sur notre site pour en savoir plus.</p><p>À bientôt,<br>L'équipe zrevents06</p>` },
+    { nom: 'Offre promotionnelle', type: 'promotionnel', sujet: 'Offre exclusive pour vous, {{prenom}} !',
+      corps: `<p>Bonjour {{prenom}},</p><p>En exclusivité pour nos clients fidèles, nous vous proposons une remise spéciale sur votre prochaine commande. Profitez-en avant la date limite !</p><p>Pour en bénéficier, mentionnez simplement ce message lors de votre prise de contact.</p><p>L'équipe zrevents06</p>` },
+    { nom: 'Newsletter mensuelle', type: 'newsletter', sujet: 'Les actualités zrevents06 — {{prenom}}',
+      corps: `<p>Bonjour {{prenom}},</p><p>Voici les dernières actualités de votre pâtisserie événementielle préférée :</p><ul><li>Nouvelles créations saisonnières</li><li>Agenda des événements à venir</li><li>Conseils de notre chef pâtissier</li></ul><p>Bonne lecture,<br>L'équipe zrevents06</p>` },
+    { nom: 'Confirmation de rendez-vous', type: 'autre', sujet: 'Confirmation de votre rendez-vous — zrevents06',
+      corps: `<p>Bonjour {{prenom}},</p><p>Nous confirmons votre rendez-vous avec notre équipe. Nous vous attendons avec impatience pour discuter de votre projet et vous présenter nos créations.</p><p>À très bientôt,<br>L'équipe zrevents06</p>` },
+  ];
+  for (const t of defaults) {
+    await apiFetch('/admin/api/email-templates', { method: 'POST', body: t });
+  }
+  toast('10 templates professionnels créés !', 'success');
+}
+
+// ─── Users ────────────────────────────────────────────────────────────────────
+async function loadUsers() {
+  const q = document.getElementById('users-filter-q').value;
+  let url = `/admin/api/users?limit=50&offset=${usersOffset}`;
+  if (q) url += '&q=' + encodeURIComponent(q);
+  document.getElementById('users-table-wrap').innerHTML = '<div class="loading-wrap"><div class="spinner"></div></div>';
+  const res = await apiFetch(url);
+  if (!res) return;
+  const { users, total } = await res.json();
+  if (!users.length) {
+    document.getElementById('users-table-wrap').innerHTML = '<div class="empty"><span class="emoji">👥</span>Aucun utilisateur trouvé</div>';
+    document.getElementById('users-pagination').innerHTML = '';
+    return;
+  }
+  document.getElementById('users-table-wrap').innerHTML = `<table>
+    <thead><tr><th>Prénom</th><th>Nom</th><th>Email</th><th>Email vérifié</th><th>Actif</th><th>Inscription</th><th>Actions</th></tr></thead>
+    <tbody>
+    ${users.map(u => `<tr>
+      <td>${esc(u.prenom)}</td>
+      <td>${esc(u.nom)}</td>
+      <td>${esc(u.email)}</td>
+      <td>${u.email_verifie ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--danger)">✗</span>'}</td>
+      <td>${(u.actif === null || u.actif === 1) ? '<span style="color:var(--success)">✓</span>' : '<span style="color:var(--danger)">✗</span>'}</td>
+      <td>${new Date(u.created_at).toLocaleDateString('fr-FR')}</td>
+      <td>
+        ${(u.actif === null || u.actif === 1)
+          ? `<button class="btn btn-sm btn-danger" onclick="toggleUser(${u.id},0)">Désactiver</button>`
+          : `<button class="btn btn-sm btn-success" onclick="toggleUser(${u.id},1)">Activer</button>`}
+      </td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+  const pages = Math.ceil(total / 50);
+  const current = Math.floor(usersOffset / 50) + 1;
+  const pag = document.getElementById('users-pagination');
+  if (pages <= 1) { pag.innerHTML = ''; return; }
+  pag.innerHTML = `
+    <span>${total} utilisateurs — Page ${current}/${pages}</span>
+    <button class="btn btn-secondary btn-sm" onclick="usersOffset=Math.max(0,usersOffset-50);loadUsers()" ${current===1?'disabled':''}>← Préc.</button>
+    <button class="btn btn-secondary btn-sm" onclick="usersOffset+=50;loadUsers()" ${current===pages?'disabled':''}>Suiv. →</button>
+  `;
+}
+
+async function toggleUser(id, actif) {
+  const res = await apiFetch(`/admin/api/users/${id}/status`, { method: 'PATCH', body: { actif: actif === 1 } });
+  if (!res) return;
+  if (res.ok) { toast(actif ? 'Utilisateur activé.' : 'Utilisateur désactivé.', 'success'); loadUsers(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+// ─── Team ─────────────────────────────────────────────────────────────────────
+async function loadTeam() {
+  document.getElementById('team-table-wrap').innerHTML = '<div class="loading-wrap"><div class="spinner"></div></div>';
+  const res = await apiFetch('/admin/api/admins');
+  if (!res) return;
+  if (res.status === 403) {
+    document.getElementById('team-table-wrap').innerHTML = '<div class="empty"><span class="emoji">🔒</span>Accès réservé aux administrateurs</div>';
+    return;
+  }
+  const { admins } = await res.json();
+  if (!admins.length) {
+    document.getElementById('team-table-wrap').innerHTML = '<div class="empty"><span class="emoji">👤</span>Aucun administrateur</div>';
+    return;
+  }
+  document.getElementById('team-table-wrap').innerHTML = `<table>
+    <thead><tr><th>Nom</th><th>Email</th><th>Rôle</th><th>Créé le</th><th>Actions</th></tr></thead>
+    <tbody>
+    ${admins.map(a => `<tr>
+      <td>${esc(a.nom)}</td>
+      <td>${esc(a.email)}</td>
+      <td><span class="badge ${a.role === 'admin' ? 'badge-warning' : 'badge-muted'}">${a.role}</span></td>
+      <td>${new Date(a.created_at).toLocaleDateString('fr-FR')}</td>
+      <td>${a.id !== currentAdmin?.id ? `<button class="btn btn-sm btn-danger" onclick="deleteAdmin(${a.id})">Supprimer</button>` : '<span class="text-muted" style="font-size:0.8rem;">Vous</span>'}</td>
+    </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+async function addAdmin() {
+  const nom = document.getElementById('new-admin-nom').value;
+  const email = document.getElementById('new-admin-email').value;
+  const password = document.getElementById('new-admin-password').value;
+  const role = document.getElementById('new-admin-role').value;
+  const res = await apiFetch('/admin/api/admins', { method: 'POST', body: { nom, email, password, role } });
+  if (!res) return;
+  const data = await res.json();
+  if (res.ok) {
+    toast('Administrateur ajouté !', 'success');
+    document.getElementById('new-admin-nom').value = '';
+    document.getElementById('new-admin-email').value = '';
+    document.getElementById('new-admin-password').value = '';
+    loadTeam();
+  } else { toast(data.error || 'Erreur', 'error'); }
+}
+
+async function deleteAdmin(id) {
+  if (!confirm('Supprimer cet administrateur ?')) return;
+  const res = await apiFetch(`/admin/api/admins/${id}`, { method: 'DELETE' });
+  if (!res) return;
+  if (res.ok) { toast('Administrateur supprimé.', 'success'); loadTeam(); }
+  else { const d = await res.json(); toast(d.error || 'Erreur', 'error'); }
+}
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+function esc(str) {
+  if (str === null || str === undefined) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function statusBadge(statut) {
+  const map = {
+    en_attente: ['badge-warning', 'En attente'],
+    valide:     ['badge-success', 'Validé'],
+    refuse:     ['badge-danger',  'Refusé'],
+  };
+  const [cls, label] = map[statut] || ['badge-muted', statut];
+  return `<span class="badge ${cls}">${label}</span>`;
+}
+
+// Close modal on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('open'); });
+});
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>

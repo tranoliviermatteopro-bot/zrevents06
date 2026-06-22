@@ -1,0 +1,21 @@
+name: Keep Alive — Ping sites
+
+on:
+  schedule:
+    # Toutes les 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping zrevents06
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://zrevents06.onrender.com || echo "000")
+          echo "zrevents06 → $STATUS"
+
+      - name: Ping log-dashboard
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 https://log-dashboard-tmye.onrender.com || echo "000")
+          echo "log-dashboard → $STATUS"

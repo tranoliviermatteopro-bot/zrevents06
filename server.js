@@ -1,11 +1,16 @@
 require('dotenv').config();
 const helmet = require('helmet');
+const logger = require('./logger');
 
-// ─── Discord Log ──────────────────────────────────────────────────────────────
+// ─── Discord Log (legacy) ─────────────────────────────────────────────────────
 const DISCORD_BOT_URL = process.env.DISCORD_BOT_URL || 'http://localhost:3001';
 const DISCORD_API_KEY = process.env.DISCORD_API_KEY || '';
 
 async function discordLog(level, message, extra = {}) {
+  // Envoyer au Log Dashboard centralisé
+  logger[level] ? logger[level](message, extra) : logger.info(message, extra);
+
+  // Garder Discord si configuré
   if (!DISCORD_API_KEY) return;
   try {
     await fetch(`${DISCORD_BOT_URL}/log`, {
@@ -13,6 +18,17 @@ async function discordLog(level, message, extra = {}) {
       headers: { 'Content-Type': 'application/json', 'x-api-key': DISCORD_API_KEY },
       body: JSON.stringify({ level, site: 'zrevents06', message, ...extra }),
     });
+  } catch {}
+}
+
+function dbLog(level, message, extra = {}) {
+  try {
+    db.run(
+      `INSERT INTO site_logs (level, message, url, method, status, ip, extra) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      level, message,
+      extra.url || null, extra.method || null, extra.status || null,
+      extra.ip || null, extra.extra ? JSON.stringify(extra.extra) : null
+    );
   } catch {}
 }
 
@@ -609,8 +625,23 @@ app.put('/api/definir-mot-de-passe', requireAuth, async (req, res) => {
 
 // ─── Route : Devis ────────────────────────────────────────────────────────────
 app.post('/api/devis', async (req, res) => {
-  const { nom, email, message } = req.body;
+  const {
+    nom, email, telephone, date_evenement, heure_evenement,
+    lieu, nombre_personnes, type_evenement, message,
+  } = req.body;
   res.json({ success: true });
+
+  // Sauvegarder en base de données
+  try {
+    db.run(
+      `INSERT INTO devis (nom, email, telephone, date_evenement, heure_evenement, lieu, nombre_personnes, type_evenement, details)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      nom || '', email || '', telephone || '', date_evenement || '',
+      heure_evenement || '', lieu || '', nombre_personnes || null,
+      type_evenement || '', message || ''
+    );
+    dbLog('info', `Nouveau devis reçu de ${nom} <${email}>`, { email });
+  } catch (err) { console.error('[DEVIS] Erreur save DB:', err); }
 
   // Notif Discord via webhook direct (→ canal devis-en-attente)
   const webhookUrl = process.env.DISCORD_WEBHOOK_DEVIS;
@@ -826,6 +857,408 @@ app.use((err, req, res, next) => {
 });
 
 // ─── Demarrage : init DB puis ecoute ──────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// ─── PANNEAU D'ADMINISTRATION ────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const ADMIN_JWT_SECRET = (process.env.JWT_SECRET || 'dev-secret') + '-admin';
+
+// ─── Middleware : Auth admin ──────────────────────────────────────────────────
+function requireAdminAuth(req, res, next) {
+  const token = req.cookies.admin_token;
+  if (!token) return res.status(401).json({ error: 'Non connecté.' });
+  try {
+    req.admin = jwt.verify(token, ADMIN_JWT_SECRET);
+    next();
+  } catch {
+    res.clearCookie('admin_token');
+    res.status(401).json({ error: 'Session expirée.' });
+  }
+}
+
+function requireAdminRole(role) {
+  return (req, res, next) => {
+    if (req.admin.role !== role) return res.status(403).json({ error: 'Accès refusé.' });
+    next();
+  };
+}
+
+// ─── Servir les fichiers statiques admin ─────────────────────────────────────
+app.use('/admin', express.static(path.join(__dirname, 'admin')));
+
+// ─── POST /admin/api/login ────────────────────────────────────────────────────
+const adminAuthLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 10, standardHeaders: true, legacyHeaders: false });
+
+app.post('/admin/api/login', adminAuthLimiter, async (req, res) => {
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email et mot de passe requis.' });
+  const admin = db.get('SELECT * FROM admins WHERE email = ?', email.toLowerCase().trim());
+  if (!admin) return res.status(401).json({ error: 'Identifiants incorrects.' });
+  const ok = await bcrypt.compare(password, admin.password_hash);
+  if (!ok) return res.status(401).json({ error: 'Identifiants incorrects.' });
+  const token = jwt.sign(
+    { id: admin.id, email: admin.email, nom: admin.nom, role: admin.role },
+    ADMIN_JWT_SECRET,
+    { expiresIn: '12h' }
+  );
+  res.cookie('admin_token', token, {
+    httpOnly: true, secure: process.env.NODE_ENV === 'production',
+    sameSite: 'Strict', maxAge: 12 * 60 * 60 * 1000,
+  });
+  dbLog('info', `Admin connecté : ${admin.email}`, { ip: req.ip });
+  res.json({ success: true, admin: { id: admin.id, nom: admin.nom, email: admin.email, role: admin.role } });
+});
+
+// ─── POST /admin/api/logout ───────────────────────────────────────────────────
+app.post('/admin/api/logout', (req, res) => {
+  res.clearCookie('admin_token');
+  res.json({ success: true });
+});
+
+// ─── GET /admin/api/me ────────────────────────────────────────────────────────
+app.get('/admin/api/me', requireAdminAuth, (req, res) => {
+  res.json({ admin: req.admin });
+});
+
+// ─── GET /admin/api/devis ─────────────────────────────────────────────────────
+app.get('/admin/api/devis', requireAdminAuth, (req, res) => {
+  const { statut, q, limit = 50, offset = 0 } = req.query;
+  let sql = 'SELECT * FROM devis WHERE 1=1';
+  const params = [];
+  if (statut && ['en_attente', 'valide', 'refuse'].includes(statut)) {
+    sql += ' AND statut = ?'; params.push(statut);
+  }
+  if (q) {
+    sql += ' AND (nom LIKE ? OR email LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+  const rows = db.all(sql, ...params);
+  const total = db.get('SELECT COUNT(*) as n FROM devis' + (statut ? ' WHERE statut = ?' : ''), ...(statut ? [statut] : []));
+  res.json({ devis: rows, total: total?.n || 0 });
+});
+
+// ─── GET /admin/api/devis/:id ─────────────────────────────────────────────────
+app.get('/admin/api/devis/:id', requireAdminAuth, (req, res) => {
+  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+  res.json({ devis: d });
+});
+
+// ─── POST /admin/api/devis/:id/valider ───────────────────────────────────────
+app.post('/admin/api/devis/:id/valider', requireAdminAuth, async (req, res) => {
+  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+
+  const whValide = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+  const whRefuse = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
+
+  // Supprimer l'ancien message refusé si existant
+  if (d.discord_refuse_id && whRefuse) {
+    await fetch(`${whRefuse}/messages/${d.discord_refuse_id}`, { method: 'DELETE' }).catch(() => {});
+  }
+
+  let valideId = d.discord_valide_id;
+  if (whValide) {
+    try {
+      const r = await fetch(`${whValide}?wait=true`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [{
+          author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+          title: '✅  Devis validé',
+          description: '> Le devis a été **accepté**. Penser à contacter le client ! 📞',
+          color: 0x2ecc71,
+          fields: [
+            { name: '👤  Client', value: `\`\`\`${d.nom}\`\`\``, inline: true },
+            { name: '📧  Email',  value: `\`\`\`${d.email}\`\`\``, inline: true },
+          ],
+          footer: { text: 'zrevents06.onrender.com  •  Devis validé' },
+          timestamp: new Date().toISOString(),
+        }] }),
+      });
+      const msg = await r.json();
+      valideId = msg.id;
+    } catch (err) { console.error('[ADMIN] Discord valider:', err); }
+  }
+
+  db.run(
+    `UPDATE devis SET statut='valide', discord_valide_id=?, discord_refuse_id=NULL, updated_at=datetime('now') WHERE id=?`,
+    valideId || null, d.id
+  );
+  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+    d.id, 'valide', req.admin.email, null);
+  // Synchroniser aussi le Map en mémoire
+  devisMsgIds.set(d.email, { valideId, refuseId: null });
+  dbLog('info', `Devis #${d.id} validé par ${req.admin.email}`, { ip: req.ip });
+  res.json({ success: true });
+});
+
+// ─── POST /admin/api/devis/:id/refuser ───────────────────────────────────────
+app.post('/admin/api/devis/:id/refuser', requireAdminAuth, async (req, res) => {
+  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+
+  const whValide = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+  const whRefuse = process.env.DISCORD_WEBHOOK_DEVIS_REFUSE;
+
+  if (d.discord_valide_id && whValide) {
+    await fetch(`${whValide}/messages/${d.discord_valide_id}`, { method: 'DELETE' }).catch(() => {});
+  }
+
+  let refuseId = d.discord_refuse_id;
+  if (whRefuse) {
+    try {
+      const r = await fetch(`${whRefuse}?wait=true`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embeds: [{
+          author: { name: '✨ zrevents06 — Pâtisserie & Événements', icon_url: 'https://zrevents06.onrender.com/favicon.ico' },
+          title: '❌  Devis refusé',
+          description: '> Le devis a été **refusé**.',
+          color: 0xe74c3c,
+          fields: [
+            { name: '👤  Client', value: `\`\`\`${d.nom}\`\`\``, inline: true },
+            { name: '📧  Email',  value: `\`\`\`${d.email}\`\`\``, inline: true },
+          ],
+          footer: { text: 'zrevents06.onrender.com  •  Devis refusé' },
+          timestamp: new Date().toISOString(),
+        }] }),
+      });
+      const msg = await r.json();
+      refuseId = msg.id;
+    } catch (err) { console.error('[ADMIN] Discord refuser:', err); }
+  }
+
+  db.run(
+    `UPDATE devis SET statut='refuse', discord_refuse_id=?, discord_valide_id=NULL, updated_at=datetime('now') WHERE id=?`,
+    refuseId || null, d.id
+  );
+  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+    d.id, 'refuse', req.admin.email, null);
+  devisMsgIds.set(d.email, { valideId: null, refuseId });
+  dbLog('info', `Devis #${d.id} refusé par ${req.admin.email}`, { ip: req.ip });
+  res.json({ success: true });
+});
+
+// ─── GET /admin/api/devis/:id/print ──────────────────────────────────────────
+app.get('/admin/api/devis/:id/print', requireAdminAuth, (req, res) => {
+  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).send('Devis introuvable.');
+  const statLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' }[d.statut] || d.statut;
+  const statColor = { en_attente: '#f59e0b', valide: '#10b981', refuse: '#ef4444' }[d.statut] || '#6b7280';
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8">
+<title>Devis #${d.id} — ${d.nom}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',sans-serif;color:#1f2937;background:#fff;padding:40px}
+  .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:32px;padding-bottom:20px;border-bottom:2px solid #e5e7eb}
+  .brand{font-size:22px;font-weight:700;color:#1d4ed8}.brand span{color:#6b7280;font-size:13px;display:block;font-weight:400}
+  .badge{padding:6px 16px;border-radius:999px;font-size:13px;font-weight:600;color:#fff;background:${statColor}}
+  h1{font-size:28px;font-weight:700;margin-bottom:4px}
+  .ref{color:#6b7280;font-size:14px;margin-bottom:32px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:24px}
+  .field label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;display:block;margin-bottom:4px}
+  .field p{font-size:15px;color:#1f2937;background:#f9fafb;padding:10px 14px;border-radius:8px;border:1px solid #e5e7eb}
+  .full{grid-column:1/-1}
+  .footer{margin-top:40px;padding-top:20px;border-top:1px solid #e5e7eb;font-size:12px;color:#9ca3af;text-align:center}
+  @media print{body{padding:20px}.no-print{display:none}}
+</style></head><body>
+<div class="header">
+  <div class="brand">zrevents06<span>Pâtisserie & Événements</span></div>
+  <span class="badge">${statLabel}</span>
+</div>
+<h1>Devis #${d.id}</h1>
+<p class="ref">Reçu le ${new Date(d.created_at).toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' })}</p>
+<div class="grid">
+  <div class="field"><label>Client</label><p>${d.nom}</p></div>
+  <div class="field"><label>Email</label><p>${d.email}</p></div>
+  <div class="field"><label>Téléphone</label><p>${d.telephone || '—'}</p></div>
+  <div class="field"><label>Type d'événement</label><p>${d.type_evenement || '—'}</p></div>
+  <div class="field"><label>Date</label><p>${d.date_evenement || '—'}</p></div>
+  <div class="field"><label>Heure</label><p>${d.heure_evenement || '—'}</p></div>
+  <div class="field"><label>Lieu</label><p>${d.lieu || '—'}</p></div>
+  <div class="field"><label>Nombre de personnes</label><p>${d.nombre_personnes || '—'}</p></div>
+  <div class="field full"><label>Détails / Message</label><p style="white-space:pre-wrap;min-height:80px">${d.details || '—'}</p></div>
+</div>
+<div class="footer">zrevents06.onrender.com — Document généré le ${new Date().toLocaleDateString('fr-FR')}</div>
+<script>window.print();</script>
+</body></html>`);
+});
+
+// ─── GET /admin/api/logs ──────────────────────────────────────────────────────
+app.get('/admin/api/logs', requireAdminAuth, (req, res) => {
+  const { level, limit = 100, offset = 0 } = req.query;
+  let sql = 'SELECT * FROM site_logs WHERE 1=1';
+  const params = [];
+  if (level && ['error', 'warning', 'info'].includes(level)) {
+    sql += ' AND level = ?'; params.push(level);
+  }
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+  res.json({ logs: db.all(sql, ...params) });
+});
+
+// ─── GET /admin/api/stats ─────────────────────────────────────────────────────
+app.get('/admin/api/stats', requireAdminAuth, (req, res) => {
+  const total      = db.get('SELECT COUNT(*) as n FROM devis');
+  const en_attente = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='en_attente'");
+  const valide     = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='valide'");
+  const refuse     = db.get("SELECT COUNT(*) as n FROM devis WHERE statut='refuse'");
+  const parMois    = db.all(`
+    SELECT strftime('%Y-%m', created_at) as mois, COUNT(*) as total,
+           SUM(CASE WHEN statut='valide' THEN 1 ELSE 0 END) as valide
+    FROM devis GROUP BY mois ORDER BY mois DESC LIMIT 6
+  `);
+  const errors  = db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='error'");
+  const warnings = db.get("SELECT COUNT(*) as n FROM site_logs WHERE level='warning'");
+  res.json({
+    devis: { total: total?.n || 0, en_attente: en_attente?.n || 0, valide: valide?.n || 0, refuse: refuse?.n || 0 },
+    parMois: parMois.reverse(),
+    logs: { errors: errors?.n || 0, warnings: warnings?.n || 0 },
+  });
+});
+
+// ─── GET /admin/api/admins ────────────────────────────────────────────────────
+app.get('/admin/api/admins', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  const admins = db.all('SELECT id, nom, email, role, created_at FROM admins ORDER BY created_at DESC');
+  res.json({ admins });
+});
+
+// ─── POST /admin/api/admins ───────────────────────────────────────────────────
+app.post('/admin/api/admins', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
+  const { nom, email, password, role } = req.body;
+  if (!nom || !email || !password) return res.status(400).json({ error: 'Nom, email et mot de passe requis.' });
+  if (!['admin', 'moderateur'].includes(role)) return res.status(400).json({ error: 'Rôle invalide.' });
+  const exists = db.get('SELECT id FROM admins WHERE email = ?', email.toLowerCase().trim());
+  if (exists) return res.status(409).json({ error: 'Un compte avec cet email existe déjà.' });
+  const hash = await bcrypt.hash(password, 12);
+  db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+    nom.trim(), email.toLowerCase().trim(), hash, role);
+  dbLog('info', `Nouvel admin créé : ${email} (${role}) par ${req.admin.email}`);
+  res.json({ success: true });
+});
+
+// ─── DELETE /admin/api/admins/:id ─────────────────────────────────────────────
+app.delete('/admin/api/admins/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  if (parseInt(req.params.id) === req.admin.id)
+    return res.status(400).json({ error: 'Vous ne pouvez pas supprimer votre propre compte.' });
+  db.run('DELETE FROM admins WHERE id = ?', req.params.id);
+  res.json({ success: true });
+});
+
+// ─── POST /admin/api/setup (création du 1er compte admin) ────────────────────
+app.post('/admin/api/setup', async (req, res) => {
+  const count = db.get('SELECT COUNT(*) as n FROM admins');
+  if (count?.n > 0) return res.status(403).json({ error: 'Setup déjà effectué.' });
+  const { nom, email, password } = req.body;
+  if (!nom || !email || !password || password.length < 8)
+    return res.status(400).json({ error: 'Nom, email et mot de passe (8 car. min) requis.' });
+  const hash = await bcrypt.hash(password, 12);
+  db.run('INSERT INTO admins (nom, email, password_hash, role) VALUES (?, ?, ?, ?)',
+    nom.trim(), email.toLowerCase().trim(), hash, 'admin');
+  res.json({ success: true });
+});
+
+// ─── GET /admin/api/devis/:id/history ────────────────────────────────────────
+app.get('/admin/api/devis/:id/history', requireAdminAuth, (req, res) => {
+  const rows = db.all('SELECT * FROM devis_history WHERE devis_id = ? ORDER BY created_at DESC', req.params.id);
+  res.json({ history: rows });
+});
+
+// ─── POST /admin/api/devis/:id/notes ─────────────────────────────────────────
+app.post('/admin/api/devis/:id/notes', requireAdminAuth, (req, res) => {
+  const { notes } = req.body;
+  if (!notes?.trim()) return res.status(400).json({ error: 'Note vide.' });
+  db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+    req.params.id, 'note', req.admin.email, notes.trim());
+  res.json({ success: true });
+});
+
+// ─── POST /admin/api/devis/:id/envoyer-email ──────────────────────────────────
+app.post('/admin/api/devis/:id/envoyer-email', requireAdminAuth, async (req, res) => {
+  const d = db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+  const { sujet, corps } = req.body;
+  if (!sujet || !corps) return res.status(400).json({ error: 'Sujet et corps requis.' });
+  try {
+    await transporter.sendMail({ from: SMTP_FROM, to: d.email, subject: sujet, html: corps });
+    db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+      d.id, 'email_envoye', req.admin.email, `Sujet: ${sujet}`);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: 'Erreur envoi email: ' + err.message }); }
+});
+
+// ─── GET /admin/api/email-templates ──────────────────────────────────────────
+app.get('/admin/api/email-templates', requireAdminAuth, (req, res) => {
+  res.json({ templates: db.all('SELECT * FROM email_templates ORDER BY type, nom') });
+});
+
+// ─── POST /admin/api/email-templates ─────────────────────────────────────────
+app.post('/admin/api/email-templates', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  const { nom, type, sujet, corps } = req.body;
+  if (!nom || !sujet || !corps) return res.status(400).json({ error: 'Champs requis.' });
+  db.run('INSERT INTO email_templates (nom, type, sujet, corps) VALUES (?, ?, ?, ?)', nom, type || 'autre', sujet, corps);
+  res.json({ success: true });
+});
+
+// ─── PUT /admin/api/email-templates/:id ──────────────────────────────────────
+app.put('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  const { nom, type, sujet, corps } = req.body;
+  db.run("UPDATE email_templates SET nom=?, type=?, sujet=?, corps=?, updated_at=datetime('now') WHERE id=?", nom, type, sujet, corps, req.params.id);
+  res.json({ success: true });
+});
+
+// ─── DELETE /admin/api/email-templates/:id ───────────────────────────────────
+app.delete('/admin/api/email-templates/:id', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  db.run('DELETE FROM email_templates WHERE id = ?', req.params.id);
+  res.json({ success: true });
+});
+
+// ─── GET /admin/api/users ─────────────────────────────────────────────────────
+app.get('/admin/api/users', requireAdminAuth, (req, res) => {
+  const { q, limit = 50, offset = 0 } = req.query;
+  let sql = 'SELECT id, prenom, nom, email, email_verifie, actif, created_at FROM users WHERE 1=1';
+  const params = [];
+  if (q) { sql += ' AND (prenom LIKE ? OR nom LIKE ? OR email LIKE ?)'; const p = '%' + q + '%'; params.push(p, p, p); }
+  sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+  params.push(parseInt(limit), parseInt(offset));
+  const total = db.get('SELECT COUNT(*) as n FROM users' + (q ? ' WHERE prenom LIKE ? OR nom LIKE ? OR email LIKE ?' : ''), ...(q ? ['%'+q+'%','%'+q+'%','%'+q+'%'] : []));
+  res.json({ users: db.all(sql, ...params), total: total?.n || 0 });
+});
+
+// ─── PATCH /admin/api/users/:id/status ───────────────────────────────────────
+app.patch('/admin/api/users/:id/status', requireAdminAuth, requireAdminRole('admin'), (req, res) => {
+  const { actif } = req.body;
+  db.run('UPDATE users SET actif = ? WHERE id = ?', actif ? 1 : 0, req.params.id);
+  res.json({ success: true });
+});
+
+// ─── GET /admin/api/newsletter ───────────────────────────────────────────────
+app.get('/admin/api/newsletter', requireAdminAuth, (req, res) => {
+  res.json({ campaigns: db.all('SELECT * FROM email_campaigns ORDER BY envoye_at DESC LIMIT 50') });
+});
+
+// ─── POST /admin/api/newsletter ──────────────────────────────────────────────
+app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
+  const { sujet, corps } = req.body;
+  if (!sujet || !corps) return res.status(400).json({ error: 'Sujet et corps requis.' });
+  const users = db.all("SELECT email, prenom FROM users WHERE email_verifie=1 AND (actif IS NULL OR actif=1)");
+  let sent = 0;
+  for (const u of users) {
+    const personalizedCorps = corps.replace(/\{\{prenom\}\}/g, u.prenom || 'Client');
+    try {
+      await transporter.sendMail({ from: SMTP_FROM, to: u.email, subject: sujet, html: personalizedCorps });
+      sent++;
+    } catch {}
+  }
+  db.run('INSERT INTO email_campaigns (sujet, corps, destinataires, admin_email) VALUES (?, ?, ?, ?)',
+    sujet, corps, sent, req.admin.email);
+  res.json({ success: true, sent });
+});
+
+// ─── Fin PANNEAU D'ADMINISTRATION ─────────────────────────────────────────────
+
 const PORT = process.env.PORT || 3000;
 
 initSqlJs().then(SQL => {
@@ -861,8 +1294,70 @@ initSqlJs().then(SQL => {
       statut      TEXT     DEFAULT 'en_attente',
       created_at  TEXT     DEFAULT (datetime('now'))
     );
+    CREATE TABLE IF NOT EXISTS devis (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom               TEXT    NOT NULL,
+      email             TEXT    NOT NULL,
+      telephone         TEXT,
+      date_evenement    TEXT,
+      heure_evenement   TEXT,
+      lieu              TEXT,
+      nombre_personnes  INTEGER,
+      type_evenement    TEXT,
+      details           TEXT,
+      statut            TEXT    DEFAULT 'en_attente',
+      discord_valide_id TEXT,
+      discord_refuse_id TEXT,
+      created_at        TEXT    DEFAULT (datetime('now')),
+      updated_at        TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS admins (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom           TEXT    NOT NULL,
+      email         TEXT    UNIQUE NOT NULL,
+      password_hash TEXT    NOT NULL,
+      role          TEXT    DEFAULT 'moderateur',
+      created_at    TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS site_logs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      level      TEXT    NOT NULL,
+      message    TEXT    NOT NULL,
+      url        TEXT,
+      method     TEXT,
+      status     INTEGER,
+      ip         TEXT,
+      extra      TEXT,
+      created_at TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS devis_history (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      devis_id    INTEGER NOT NULL,
+      action      TEXT    NOT NULL,
+      admin_email TEXT,
+      notes       TEXT,
+      created_at  TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS email_templates (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      nom        TEXT    NOT NULL,
+      type       TEXT    DEFAULT 'autre',
+      sujet      TEXT    NOT NULL,
+      corps      TEXT    NOT NULL,
+      created_at TEXT    DEFAULT (datetime('now')),
+      updated_at TEXT    DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS email_campaigns (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      sujet         TEXT    NOT NULL,
+      corps         TEXT    NOT NULL,
+      destinataires INTEGER DEFAULT 0,
+      envoye_at     TEXT    DEFAULT (datetime('now')),
+      admin_email   TEXT
+    );
   `);
   saveDb();
+  try { _db.run("ALTER TABLE users ADD COLUMN actif INTEGER DEFAULT 1"); saveDb(); } catch {}
 
   app.listen(PORT, () => {
     console.log('zrevents06 -> http://localhost:' + PORT);

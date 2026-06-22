@@ -23,3 +23,7 @@ services:
         sync: false
       - key: SMTP_FROM
         sync: false
+      - key: LOG_DASHBOARD_URL
+        value: https://log-dashboard-tmye.onrender.com
+      - key: LOG_DASHBOARD_KEY
+        value: 977aee6f26fa58902093c9c42d449fbda38dd536ddfd19628b8ab70aa2f50244
