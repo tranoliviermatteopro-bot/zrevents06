@@ -12,14 +12,16 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'changeme_jwt_secret_logdash';
 
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: { rejectUnauthorized: false },
-});
+// Isoler dans le schéma "logdashboard" via options dans la connection string (évite
+// le bug pool.on('connect') qui bloque le premier pool.query en pg 8.x)
+const _dbUrl = process.env.DATABASE_URL || '';
+const _dbUrlWithSchema = _dbUrl
+  ? _dbUrl + (_dbUrl.includes('?') ? '&' : '?') + 'options=-c+search_path%3Dlogdashboard%2Cpublic'
+  : '';
 
-// Isoler les tables dans le schéma "logdashboard"
-pool.on('connect', (client) => {
-  client.query('SET search_path TO logdashboard, public').catch(() => {});
+const pool = new Pool({
+  connectionString: _dbUrlWithSchema || undefined,
+  ssl: _dbUrl ? { rejectUnauthorized: false } : false,
 });
 
 // ─── SECURITY HEADERS (Helmet) ────────────────────────────────────────────────
@@ -139,8 +141,8 @@ app.use(express.static(path.join(__dirname, 'public')));
 // ─── DATABASE ────────────────────────────────────────────────────────────────
 
 async function initDB() {
+  // search_path déjà fixé via la connection string (options=-c+search_path=logdashboard,public)
   await pool.query('CREATE SCHEMA IF NOT EXISTS logdashboard');
-  await pool.query('SET search_path TO logdashboard, public');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS admins (
