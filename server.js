@@ -56,14 +56,16 @@ const transporter = nodemailer.createTransport({
 });
 
 // ─── PostgreSQL Pool ──────────────────────────────────────────────────────────
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_URL ? { rejectUnauthorized: false } : false,
-});
+// Isoler dans le schéma "zrevents" via options dans la connection string (évite
+// le bug pool.on('connect') qui bloque le premier pool.query en pg 8.x)
+const _dbUrl = process.env.DATABASE_URL || '';
+const _dbUrlWithSchema = _dbUrl
+  ? _dbUrl + (_dbUrl.includes('?') ? '&' : '?') + 'options=-c+search_path%3Dzrevents%2Cpublic'
+  : '';
 
-// Isoler les tables dans le schéma "zrevents" pour partager la DB avec d'autres services
-pool.on('connect', (client) => {
-  client.query('SET search_path TO zrevents, public').catch(() => {});
+const pool = new Pool({
+  connectionString: _dbUrlWithSchema || undefined,
+  ssl: _dbUrl ? { rejectUnauthorized: false } : false,
 });
 
 function toPositional(sql) {
@@ -1254,8 +1256,8 @@ const PORT = process.env.PORT || 3000;
 
 async function startServer() {
   // Créer le schéma dédié si inexistant (isolation vis-à-vis des autres services sur la même DB)
+  // search_path est déjà fixé via la connection string (options=-c+search_path=zrevents,public)
   await pool.query('CREATE SCHEMA IF NOT EXISTS zrevents');
-  await pool.query('SET search_path TO zrevents, public');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS users (
