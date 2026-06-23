@@ -34,6 +34,7 @@ const cookieParser = require('cookie-parser');
 const jwt          = require('jsonwebtoken');
 const bcrypt       = require('bcryptjs');
 const nodemailer   = require('nodemailer');
+const Stripe       = require('stripe');
 const rateLimit    = require('express-rate-limit');
 const dns          = require('dns').promises;
 const crypto       = require('crypto');
@@ -47,6 +48,7 @@ const expressSession = require('express-session');
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-changez-en-prod';
 const BASE_URL   = process.env.BASE_URL   || 'http://localhost:3000';
 const SMTP_FROM  = process.env.SMTP_FROM  || process.env.SMTP_USER;
+const stripe     = process.env.STRIPE_SECRET_KEY ? Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 const transporter = nodemailer.createTransport({
   host:   process.env.SMTP_HOST,
@@ -120,6 +122,70 @@ const globalLimiter = rateLimit({
   message: { error: 'Trop de requêtes. Réessayez dans 15 minutes.' },
 });
 app.use(globalLimiter);
+
+// ─── Stripe webhook — corps brut requis avant express.json() ─────────────────
+app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), async (req, res) => {
+  const sig    = req.headers['stripe-signature'];
+  const secret = process.env.STRIPE_WEBHOOK_SECRET;
+  if (!stripe || !secret) return res.status(400).send('Stripe non configuré.');
+
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, sig, secret);
+  } catch (err) {
+    console.error('[STRIPE] Signature invalide:', err.message);
+    return res.status(400).send(`Webhook Error: ${err.message}`);
+  }
+
+  if (event.type === 'checkout.session.completed') {
+    const session  = event.data.object;
+    const devisId  = session.metadata?.devis_id;
+    if (devisId) {
+      try {
+        const d = await db.get('SELECT * FROM devis WHERE id = ?', devisId);
+        if (d && d.statut !== 'confirme') {
+          const montantPaye = (session.amount_total / 100).toFixed(2);
+          await db.run(`UPDATE devis SET statut='confirme', updated_at=NOW() WHERE id=?`, d.id);
+          await db.run(
+            'INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+            d.id, 'confirme', 'stripe-webhook',
+            `Paiement confirmé — session ${session.id} — ${montantPaye}€`
+          );
+
+          const { emailDevisConfirmeHtml } = require('./src/emails/templates');
+          await transporter.sendMail({
+            from: SMTP_FROM, to: d.email,
+            subject: '✅ Confirmation de votre commande — zrevents06',
+            html: emailDevisConfirmeHtml(d, montantPaye),
+          }).catch(e => console.error('[STRIPE] Email client:', e.message));
+
+          const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+          if (wh) {
+            fetch(wh, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ embeds: [{
+                title: '💳 Paiement reçu — Devis confirmé',
+                color: 0x27ae60,
+                fields: [
+                  { name: '👤 Client',     value: `\`${d.nom}\``,             inline: true },
+                  { name: '💰 Acompte',    value: `\`${montantPaye} €\``,     inline: true },
+                  { name: '📧 Email',      value: `\`${d.email}\``,           inline: false },
+                  { name: '📅 Événement',  value: `\`${d.date_evenement || '—'}\``, inline: true },
+                  { name: '📍 Lieu',       value: `\`${d.lieu || '—'}\``,    inline: true },
+                ],
+                footer: { text: 'zrevents06 • Paiement reçu via Stripe' },
+                timestamp: new Date().toISOString(),
+              }] }),
+            }).catch(() => {});
+          }
+
+          dbLog('info', `Devis #${d.id} confirmé via Stripe (${montantPaye}€)`, { email: d.email });
+        }
+      } catch (err) { console.error('[STRIPE] Traitement webhook:', err); }
+    }
+  }
+  res.json({ received: true });
+});
 
 app.use(express.json({ limit: '10kb' }));
 app.use(express.urlencoded({ extended: true, limit: '10kb' }));
@@ -918,7 +984,7 @@ app.get('/admin/api/devis', requireAdminAuth, async (req, res) => {
   const { statut, q, limit = 50, offset = 0 } = req.query;
   let sql = 'SELECT * FROM devis WHERE 1=1';
   const params = [];
-  if (statut && ['en_attente', 'valide', 'refuse'].includes(statut)) {
+  if (statut && ['en_attente', 'valide', 'refuse', 'confirme'].includes(statut)) {
     sql += ' AND statut = ?'; params.push(statut);
   }
   if (q) {
@@ -1031,6 +1097,63 @@ app.post('/admin/api/devis/:id/refuser', requireAdminAuth, async (req, res) => {
   devisMsgIds.set(d.email, { valideId: null, refuseId });
   dbLog('info', `Devis #${d.id} refusé par ${req.admin.email}`, { ip: req.ip });
   res.json({ success: true });
+});
+
+// ─── POST /admin/api/devis/:id/demander-acompte ──────────────────────────────
+app.post('/admin/api/devis/:id/demander-acompte', requireAdminAuth, async (req, res) => {
+  if (!stripe) return res.status(500).json({ error: 'Stripe non configuré (STRIPE_SECRET_KEY manquant).' });
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+  if (d.statut !== 'valide') return res.status(400).json({ error: 'Le devis doit être validé avant de demander un acompte.' });
+
+  const { montant_acompte, montant_total } = req.body;
+  const acompte = parseFloat(montant_acompte);
+  if (!acompte || acompte <= 0) return res.status(400).json({ error: 'Montant acompte invalide.' });
+
+  await db.run(
+    'UPDATE devis SET montant_acompte=?, montant_total=?, updated_at=NOW() WHERE id=?',
+    acompte, montant_total ? parseFloat(montant_total) : null, d.id
+  );
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          unit_amount: Math.round(acompte * 100),
+          product_data: {
+            name: `Acompte — ${d.type_evenement || 'Événement'} du ${d.date_evenement || '—'}`,
+            description: `${d.nombre_personnes || '?'} personnes — ${d.lieu || '—'}`,
+          },
+        },
+        quantity: 1,
+      }],
+      customer_email: d.email,
+      metadata: { devis_id: String(d.id) },
+      success_url: `${BASE_URL}/paiement-succes.html`,
+      cancel_url:  `${BASE_URL}/paiement-annule.html`,
+    });
+
+    await db.run('UPDATE devis SET stripe_session_id=?, updated_at=NOW() WHERE id=?', session.id, d.id);
+
+    const { emailLienPaiementHtml } = require('./src/emails/templates');
+    await transporter.sendMail({
+      from: SMTP_FROM, to: d.email,
+      subject: '💳 Votre lien de paiement — zrevents06',
+      html: emailLienPaiementHtml(d, acompte, session.url),
+    });
+
+    await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+      d.id, 'acompte_demande', req.admin.email, `Acompte ${acompte}€ — session ${session.id}`);
+
+    dbLog('info', `Devis #${d.id} — lien paiement envoyé à ${d.email} (${acompte}€)`, { ip: req.ip });
+    res.json({ success: true, checkout_url: session.url });
+  } catch (err) {
+    console.error('[STRIPE] Erreur création session:', err.message);
+    res.status(500).json({ error: 'Erreur Stripe : ' + err.message });
+  }
 });
 
 // ─── GET /admin/api/devis/:id/print ──────────────────────────────────────────
@@ -1350,6 +1473,13 @@ async function startServer() {
       envoye_at     TIMESTAMPTZ DEFAULT NOW(),
       admin_email   TEXT
     );
+  `);
+
+  // Colonnes ajoutées après la création initiale de la table devis
+  await pool.query(`
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_total     REAL;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_acompte   REAL;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS stripe_session_id TEXT;
   `);
 
   // ── Auto-seed comptes admin depuis ADMIN_ACCOUNTS (env var JSON) ──────────

@@ -248,6 +248,7 @@
             <button class="filter-btn active" onclick="filterDevis('')" id="f-all">Tous</button>
             <button class="filter-btn" onclick="filterDevis('en_attente')" id="f-attente">En attente</button>
             <button class="filter-btn" onclick="filterDevis('valide')" id="f-valide">Validés</button>
+            <button class="filter-btn" onclick="filterDevis('confirme')" id="f-confirme">Confirmés</button>
             <button class="filter-btn" onclick="filterDevis('refuse')" id="f-refuse">Refusés</button>
           </div>
           <input class="search-input" id="devis-search" placeholder="🔍 Rechercher…" oninput="searchDevis(this.value)">
@@ -382,7 +383,7 @@ async function loadStats() {
 // ── Devis ──
 function filterDevis(f) {
   devisFilter = f; devisOffset = 0;
-  ['all','attente','valide','refuse'].forEach(id => document.getElementById('f-'+id)?.classList.remove('active'));
+  ['all','attente','valide','confirme','refuse'].forEach(id => document.getElementById('f-'+id)?.classList.remove('active'));
   document.getElementById('f-' + (f || 'all'))?.classList.add('active');
   loadDevis();
 }
@@ -398,7 +399,7 @@ async function loadDevis() {
   const r = await fetch('/admin/api/devis?' + params);
   const { devis, total } = await r.json();
   if (!devis.length) { wrap.innerHTML = '<div class="empty">Aucun devis trouvé.</div>'; return; }
-  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' };
+  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé', confirme: '💳 Confirmé' };
   wrap.innerHTML = `
     <table>
       <thead><tr>
@@ -412,11 +413,11 @@ async function loadDevis() {
             <td style="color:var(--gray-600)">${esc(d.email)}</td>
             <td>${esc(d.type_evenement || '—')}</td>
             <td style="color:var(--gray-400);font-size:12px">${d.date_evenement || '—'}</td>
-            <td><span class="status-badge ${d.statut}"><span class="dot ${d.statut}"></span>${statusLabel[d.statut]}</span></td>
+            <td><span class="status-badge ${d.statut}"><span class="dot ${d.statut}"></span>${statusLabel[d.statut] || d.statut}</span></td>
             <td style="display:flex;gap:6px;flex-wrap:wrap">
               <button class="action-btn blue" onclick="openDevis(${d.id})">Voir</button>
-              ${d.statut !== 'valide'  ? `<button class="action-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
-              ${d.statut !== 'refuse'  ? `<button class="action-btn red"   onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
+              ${d.statut !== 'valide' && d.statut !== 'confirme' ? `<button class="action-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
+              ${d.statut !== 'refuse' ? `<button class="action-btn red"   onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
             </td>
           </tr>
         `).join('')}
@@ -444,7 +445,35 @@ async function actionDevis(id, action) {
 async function openDevis(id) {
   const r = await fetch(`/admin/api/devis/${id}`);
   const { devis: d } = await r.json();
-  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé' };
+  const statusLabel = { en_attente: 'En attente', valide: 'Validé', refuse: 'Refusé', confirme: '💳 Confirmé' };
+
+  const acompteSection = d.statut === 'valide' ? `
+    <div class="detail-field full" style="margin-top:8px">
+      <label>💳 Demander un acompte</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px">
+        <div>
+          <small style="font-size:11px;color:#6b7280;display:block;margin-bottom:4px">Montant acompte (€) *</small>
+          <input id="inp-acompte" type="number" min="1" step="0.01"
+            placeholder="ex : 150.00"
+            value="${d.montant_acompte || ''}"
+            style="width:100%;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px">
+        </div>
+        <div>
+          <small style="font-size:11px;color:#6b7280;display:block;margin-bottom:4px">Montant total devis (€)</small>
+          <input id="inp-total" type="number" min="1" step="0.01"
+            placeholder="ex : 500.00"
+            value="${d.montant_total || ''}"
+            style="width:100%;padding:8px 10px;border:1px solid #e5e7eb;border-radius:6px;font-size:14px">
+        </div>
+      </div>
+      <button class="modal-btn" onclick="demanderAcompte(${d.id})"
+        style="margin-top:10px;background:#7c3aed;color:#fff;border:none;cursor:pointer">
+        💳 Envoyer le lien de paiement
+      </button>
+    </div>` : (d.montant_acompte ? `
+    <div class="detail-field"><label>Acompte demandé</label><p>${parseFloat(d.montant_acompte).toFixed(2)} €</p></div>
+    <div class="detail-field"><label>Montant total</label><p>${d.montant_total ? parseFloat(d.montant_total).toFixed(2) + ' €' : '—'}</p></div>` : '');
+
   document.getElementById('modal-content').innerHTML = `
     <div class="modal-header">
       <h3>Devis #${d.id} — ${esc(d.nom)}</h3>
@@ -452,7 +481,7 @@ async function openDevis(id) {
     </div>
     <div class="detail-grid">
       <div class="detail-field"><label>Client</label><p>${esc(d.nom)}</p></div>
-      <div class="detail-field"><label>Statut</label><p>${statusLabel[d.statut]}</p></div>
+      <div class="detail-field"><label>Statut</label><p>${statusLabel[d.statut] || d.statut}</p></div>
       <div class="detail-field"><label>Email</label><p>${esc(d.email)}</p></div>
       <div class="detail-field"><label>Téléphone</label><p>${esc(d.telephone || '—')}</p></div>
       <div class="detail-field"><label>Type d'événement</label><p>${esc(d.type_evenement || '—')}</p></div>
@@ -462,15 +491,31 @@ async function openDevis(id) {
       <div class="detail-field"><label>Lieu</label><p>${esc(d.lieu || '—')}</p></div>
       <div class="detail-field"><label>Reçu le</label><p>${new Date(d.created_at).toLocaleDateString('fr-FR')}</p></div>
       <div class="detail-field full"><label>Détails / Message</label><p style="white-space:pre-wrap;min-height:60px">${esc(d.details || '—')}</p></div>
+      ${acompteSection}
     </div>
     <div class="modal-actions">
-      ${d.statut !== 'valide' ? `<button class="modal-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
-      ${d.statut !== 'refuse' ? `<button class="modal-btn red"   onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
+      ${d.statut !== 'valide' && d.statut !== 'confirme' ? `<button class="modal-btn green" onclick="actionDevis(${d.id},'valider')">✓ Valider</button>` : ''}
+      ${d.statut !== 'refuse' ? `<button class="modal-btn red" onclick="actionDevis(${d.id},'refuser')">✗ Refuser</button>` : ''}
       <button class="modal-btn blue" onclick="window.open('/admin/api/devis/${d.id}/print','_blank')">🖨 Imprimer / PDF</button>
       <button class="modal-btn gray" onclick="document.getElementById('modal-overlay').classList.remove('open')">Fermer</button>
     </div>
   `;
   document.getElementById('modal-overlay').classList.add('open');
+}
+
+async function demanderAcompte(id) {
+  const acompte = document.getElementById('inp-acompte')?.value;
+  const total   = document.getElementById('inp-total')?.value;
+  if (!acompte || parseFloat(acompte) <= 0) { toast('Montant acompte requis.', true); return; }
+  const r = await fetch(`/admin/api/devis/${id}/demander-acompte`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ montant_acompte: parseFloat(acompte), montant_total: total ? parseFloat(total) : null }),
+  });
+  const data = await r.json();
+  if (!r.ok) { toast(data.error, true); return; }
+  toast('Lien de paiement envoyé au client ✓');
+  document.getElementById('modal-overlay').classList.remove('open');
+  loadDevis();
 }
 function closeModal(e) { if (e.target === document.getElementById('modal-overlay')) document.getElementById('modal-overlay').classList.remove('open'); }
 
