@@ -137,53 +137,149 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), asyn
     return res.status(400).send(`Webhook Error: ${err.message}`);
   }
 
+  // ── Idempotence : ignorer un event déjà traité ────────────────────────────
+  try {
+    const already = await db.get('SELECT event_id FROM stripe_processed_events WHERE event_id = ?', event.id);
+    if (already) return res.json({ received: true, skipped: true });
+    await db.run('INSERT INTO stripe_processed_events (event_id) VALUES (?)', event.id);
+  } catch (err) {
+    console.error('[STRIPE] Idempotence check:', err.message);
+  }
+
+  // ── checkout.session.completed ────────────────────────────────────────────
   if (event.type === 'checkout.session.completed') {
-    const session  = event.data.object;
-    const devisId  = session.metadata?.devis_id;
+    const session = event.data.object;
+    const devisId = session.metadata?.devis_id;
+    const type    = session.metadata?.type || 'acompte';
+
     if (devisId) {
       try {
         const d = await db.get('SELECT * FROM devis WHERE id = ?', devisId);
-        if (d && d.statut !== 'confirme') {
-          const montantPaye = (session.amount_total / 100).toFixed(2);
-          await db.run(`UPDATE devis SET statut='confirme', updated_at=NOW() WHERE id=?`, d.id);
+        if (!d) throw new Error(`Devis #${devisId} introuvable`);
+        const montantPaye = (session.amount_total / 100).toFixed(2);
+
+        if (type === 'solde') {
+          if (d.statut !== 'paye-integral') {
+            await db.run(`UPDATE devis SET statut='paye-integral', updated_at=NOW() WHERE id=?`, d.id);
+            await db.run(
+              'INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+              d.id, 'paye-integral', 'stripe-webhook',
+              `Solde payé — session ${session.id} — ${montantPaye}€`
+            );
+
+            const { emailDevisSoldeConfirmeHtml } = require('./src/emails/templates');
+            await transporter.sendMail({
+              from: SMTP_FROM, to: d.email,
+              subject: '✅ Paiement intégral confirmé — zrevents06',
+              html: emailDevisSoldeConfirmeHtml(d, montantPaye),
+            }).catch(e => console.error('[STRIPE] Email solde client:', e.message));
+
+            const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+            if (wh) {
+              fetch(wh, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ embeds: [{
+                  title: '💳 Solde reçu — Devis intégralement payé',
+                  color: 0x1abc9c,
+                  fields: [
+                    { name: '👤 Client',    value: `\`${d.nom}\``,                   inline: true },
+                    { name: '💰 Solde',     value: `\`${montantPaye} €\``,            inline: true },
+                    { name: '📧 Email',     value: `\`${d.email}\``,                  inline: false },
+                    { name: '📅 Événement', value: `\`${d.date_evenement || '—'}\``,  inline: true },
+                  ],
+                  footer: { text: 'zrevents06 • Paiement intégral reçu via Stripe' },
+                  timestamp: new Date().toISOString(),
+                }] }),
+              }).catch(() => {});
+            }
+
+            dbLog('info', `Devis #${d.id} intégralement payé via Stripe (solde ${montantPaye}€)`, { email: d.email });
+          }
+        } else {
+          // type === 'acompte'
+          if (d.statut !== 'confirme' && d.statut !== 'paye-integral') {
+            await db.run(`UPDATE devis SET statut='confirme', updated_at=NOW() WHERE id=?`, d.id);
+            await db.run(
+              'INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+              d.id, 'confirme', 'stripe-webhook',
+              `Paiement confirmé — session ${session.id} — ${montantPaye}€`
+            );
+
+            const { emailDevisConfirmeHtml } = require('./src/emails/templates');
+            await transporter.sendMail({
+              from: SMTP_FROM, to: d.email,
+              subject: '✅ Confirmation de votre commande — zrevents06',
+              html: emailDevisConfirmeHtml(d, montantPaye),
+            }).catch(e => console.error('[STRIPE] Email client:', e.message));
+
+            const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
+            if (wh) {
+              fetch(wh, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ embeds: [{
+                  title: '💳 Paiement reçu — Devis confirmé',
+                  color: 0x27ae60,
+                  fields: [
+                    { name: '👤 Client',    value: `\`${d.nom}\``,                   inline: true },
+                    { name: '💰 Acompte',   value: `\`${montantPaye} €\``,            inline: true },
+                    { name: '📧 Email',     value: `\`${d.email}\``,                  inline: false },
+                    { name: '📅 Événement', value: `\`${d.date_evenement || '—'}\``,  inline: true },
+                    { name: '📍 Lieu',      value: `\`${d.lieu || '—'}\``,            inline: true },
+                  ],
+                  footer: { text: 'zrevents06 • Paiement reçu via Stripe' },
+                  timestamp: new Date().toISOString(),
+                }] }),
+              }).catch(() => {});
+            }
+
+            dbLog('info', `Devis #${d.id} confirmé via Stripe (${montantPaye}€)`, { email: d.email });
+          }
+        }
+      } catch (err) { console.error('[STRIPE] Traitement webhook completed:', err); }
+    }
+  }
+
+  // ── checkout.session.expired + async_payment_failed ───────────────────────
+  if (event.type === 'checkout.session.expired' || event.type === 'async_payment_failed') {
+    const session = event.data.object;
+    const devisId = session.metadata?.devis_id;
+    const type    = session.metadata?.type || 'acompte';
+
+    if (devisId) {
+      try {
+        const d = await db.get('SELECT * FROM devis WHERE id = ?', devisId);
+        if (d) {
+          const label = event.type === 'checkout.session.expired' ? 'Lien expiré' : 'Paiement échoué';
           await db.run(
             'INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
-            d.id, 'confirme', 'stripe-webhook',
-            `Paiement confirmé — session ${session.id} — ${montantPaye}€`
+            d.id, 'paiement-echoue', 'stripe-webhook',
+            `${label} (${type}) — session ${session.id}`
           );
-
-          const { emailDevisConfirmeHtml } = require('./src/emails/templates');
-          await transporter.sendMail({
-            from: SMTP_FROM, to: d.email,
-            subject: '✅ Confirmation de votre commande — zrevents06',
-            html: emailDevisConfirmeHtml(d, montantPaye),
-          }).catch(e => console.error('[STRIPE] Email client:', e.message));
 
           const wh = process.env.DISCORD_WEBHOOK_DEVIS_VALIDE;
           if (wh) {
             fetch(wh, {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ embeds: [{
-                title: '💳 Paiement reçu — Devis confirmé',
-                color: 0x27ae60,
+                title: `⚠️ ${label} — Devis #${d.id}`,
+                color: 0xe67e22,
                 fields: [
-                  { name: '👤 Client',     value: `\`${d.nom}\``,             inline: true },
-                  { name: '💰 Acompte',    value: `\`${montantPaye} €\``,     inline: true },
-                  { name: '📧 Email',      value: `\`${d.email}\``,           inline: false },
-                  { name: '📅 Événement',  value: `\`${d.date_evenement || '—'}\``, inline: true },
-                  { name: '📍 Lieu',       value: `\`${d.lieu || '—'}\``,    inline: true },
+                  { name: '👤 Client', value: `\`${d.nom}\``,  inline: true },
+                  { name: '📧 Email',  value: `\`${d.email}\``, inline: true },
+                  { name: '🏷️ Type',   value: `\`${type}\``,    inline: true },
                 ],
-                footer: { text: 'zrevents06 • Paiement reçu via Stripe' },
+                footer: { text: 'zrevents06 • Échec paiement Stripe' },
                 timestamp: new Date().toISOString(),
               }] }),
             }).catch(() => {});
           }
 
-          dbLog('info', `Devis #${d.id} confirmé via Stripe (${montantPaye}€)`, { email: d.email });
+          dbLog('warning', `Devis #${d.id} — ${label} (${type})`, { email: d.email });
         }
-      } catch (err) { console.error('[STRIPE] Traitement webhook:', err); }
+      } catch (err) { console.error('[STRIPE] Traitement webhook échec:', err); }
     }
   }
+
   res.json({ received: true });
 });
 
@@ -984,7 +1080,7 @@ app.get('/admin/api/devis', requireAdminAuth, async (req, res) => {
   const { statut, q, limit = 50, offset = 0 } = req.query;
   let sql = 'SELECT * FROM devis WHERE 1=1';
   const params = [];
-  if (statut && ['en_attente', 'valide', 'refuse', 'confirme'].includes(statut)) {
+  if (statut && ['en_attente', 'valide', 'refuse', 'confirme', 'paye-integral'].includes(statut)) {
     sql += ' AND statut = ?'; params.push(statut);
   }
   if (q) {
@@ -1131,7 +1227,7 @@ app.post('/admin/api/devis/:id/demander-acompte', requireAdminAuth, async (req, 
         quantity: 1,
       }],
       customer_email: d.email,
-      metadata: { devis_id: String(d.id) },
+      metadata: { devis_id: String(d.id), type: 'acompte' },
       success_url: `${BASE_URL}/paiement-succes.html`,
       cancel_url:  `${BASE_URL}/paiement-annule.html`,
     });
@@ -1152,6 +1248,63 @@ app.post('/admin/api/devis/:id/demander-acompte', requireAdminAuth, async (req, 
     res.json({ success: true, checkout_url: session.url });
   } catch (err) {
     console.error('[STRIPE] Erreur création session:', err.message);
+    res.status(500).json({ error: 'Erreur Stripe : ' + err.message });
+  }
+});
+
+// ─── POST /admin/api/devis/:id/demander-solde ────────────────────────────────
+app.post('/admin/api/devis/:id/demander-solde', requireAdminAuth, async (req, res) => {
+  if (!stripe) return res.status(500).json({ error: 'Stripe non configuré (STRIPE_SECRET_KEY manquant).' });
+  const d = await db.get('SELECT * FROM devis WHERE id = ?', req.params.id);
+  if (!d) return res.status(404).json({ error: 'Devis introuvable.' });
+  if (d.statut !== 'confirme') return res.status(400).json({ error: 'Le devis doit être confirmé (acompte payé) avant de demander le solde.' });
+
+  if (!d.montant_total) return res.status(400).json({ error: 'Montant total non défini sur ce devis — renseignez-le avant de demander le solde.' });
+
+  const acompte = parseFloat(d.montant_acompte || 0);
+  const total   = parseFloat(d.montant_total);
+  const solde   = parseFloat((total - acompte).toFixed(2));
+
+  if (solde <= 0)    return res.status(400).json({ error: `Solde nul ou négatif (${solde} €) — vérifiez les montants du devis.` });
+  if (solde < 0.50)  return res.status(400).json({ error: `Solde trop faible (${solde} €) — Stripe exige un minimum de 0,50 €.` });
+
+  try {
+    const session = await stripe.checkout.sessions.create({
+      payment_method_types: ['card'],
+      mode: 'payment',
+      line_items: [{
+        price_data: {
+          currency: 'eur',
+          unit_amount: Math.round(solde * 100),
+          product_data: {
+            name: `Solde — ${d.type_evenement || 'Événement'} du ${d.date_evenement || '—'}`,
+            description: `${d.nombre_personnes || '?'} personnes — ${d.lieu || '—'}`,
+          },
+        },
+        quantity: 1,
+      }],
+      customer_email: d.email,
+      metadata: { devis_id: String(d.id), type: 'solde' },
+      success_url: `${BASE_URL}/paiement-succes.html`,
+      cancel_url:  `${BASE_URL}/paiement-annule.html`,
+    });
+
+    await db.run('UPDATE devis SET stripe_session_id_solde=?, updated_at=NOW() WHERE id=?', session.id, d.id);
+
+    const { emailLienPaiementSoldeHtml } = require('./src/emails/templates');
+    await transporter.sendMail({
+      from: SMTP_FROM, to: d.email,
+      subject: '💳 Votre lien de paiement du solde — zrevents06',
+      html: emailLienPaiementSoldeHtml(d, solde, session.url),
+    });
+
+    await db.run('INSERT INTO devis_history (devis_id, action, admin_email, notes) VALUES (?, ?, ?, ?)',
+      d.id, 'solde_demande', req.admin.email, `Solde ${solde}€ — session ${session.id}`);
+
+    dbLog('info', `Devis #${d.id} — lien solde envoyé à ${d.email} (${solde}€)`, { ip: req.ip });
+    res.json({ success: true, checkout_url: session.url });
+  } catch (err) {
+    console.error('[STRIPE] Erreur création session solde:', err.message);
     res.status(500).json({ error: 'Erreur Stripe : ' + err.message });
   }
 });
@@ -1357,20 +1510,37 @@ app.get('/admin/api/newsletter', requireAdminAuth, async (req, res) => {
 
 // ─── POST /admin/api/newsletter ──────────────────────────────────────────────
 app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
-  const { sujet, corps } = req.body;
-  if (!sujet || !corps) return res.status(400).json({ error: 'Sujet et corps requis.' });
-  const users = await db.all("SELECT email, prenom FROM users WHERE email_verifie=1 AND (actif IS NULL OR actif=1)");
-  let sent = 0;
-  for (const u of users) {
-    const personalizedCorps = corps.replace(/\{\{prenom\}\}/g, u.prenom || 'Client');
+  const { sujet, htmlContent, testEmail } = req.body;
+  if (!sujet || !htmlContent) return res.status(400).json({ error: 'Sujet et contenu requis.' });
+  if (testEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testEmail)) {
+    return res.status(400).json({ error: 'Format e-mail de test invalide.' });
+  }
+  const { emailNewsletterHtml } = require('./src/emails/templates');
+  const html = emailNewsletterHtml(sujet, htmlContent);
+
+  if (testEmail) {
     try {
-      await transporter.sendMail({ from: SMTP_FROM, to: u.email, subject: sujet, html: personalizedCorps });
+      await transporter.sendMail({ from: SMTP_FROM, to: testEmail, subject: `[TEST] ${sujet}`, html });
+      return res.json({ success: true, sent: 1, test: true });
+    } catch {
+      return res.status(500).json({ error: 'Échec envoi test.' });
+    }
+  }
+
+  const users = await db.all("SELECT email, prenom FROM users WHERE email_verifie=1 AND (actif IS NULL OR actif=1)");
+  let sent = 0, failed = 0;
+  for (const u of users) {
+    const personalizedHtml = html.replace(/\{\{prenom\}\}/g, u.prenom || 'Client');
+    try {
+      await transporter.sendMail({ from: SMTP_FROM, to: u.email, subject: sujet, html: personalizedHtml });
       sent++;
-    } catch {}
+    } catch { failed++; }
+    await new Promise(r => setTimeout(r, 100)); // 10 emails/s max — évite blacklist SMTP
   }
   await db.run('INSERT INTO email_campaigns (sujet, corps, destinataires, admin_email) VALUES (?, ?, ?, ?)',
-    sujet, corps, sent, req.admin.email);
-  res.json({ success: true, sent });
+    sujet, htmlContent, sent, req.admin.email);
+  dbLog('info', `Newsletter "${sujet}" → ${sent} ok, ${failed} échoués`, { extra: { admin: req.admin.email } });
+  res.json({ success: true, sent, failed });
 });
 
 // ─── Fin PANNEAU D'ADMINISTRATION ─────────────────────────────────────────────
@@ -1477,9 +1647,18 @@ async function startServer() {
 
   // Colonnes ajoutées après la création initiale de la table devis
   await pool.query(`
-    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_total     REAL;
-    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_acompte   REAL;
-    ALTER TABLE devis ADD COLUMN IF NOT EXISTS stripe_session_id TEXT;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_total            REAL;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS montant_acompte          REAL;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS stripe_session_id        TEXT;
+    ALTER TABLE devis ADD COLUMN IF NOT EXISTS stripe_session_id_solde  TEXT;
+  `);
+
+  // Table de déduplication des events Stripe (idempotence webhook)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS stripe_processed_events (
+      event_id    TEXT        PRIMARY KEY,
+      processed_at TIMESTAMPTZ DEFAULT NOW()
+    );
   `);
 
   // ── Auto-seed comptes admin depuis ADMIN_ACCOUNTS (env var JSON) ──────────

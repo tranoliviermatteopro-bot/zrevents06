@@ -177,4 +177,122 @@ function emailDevisConfirmeHtml(devis, montantPaye) {
     </p>`);
 }
 
-module.exports = { emailConfirmationHtml, emailResetHtml, emailLienPaiementHtml, emailDevisConfirmeHtml };
+// ─── Template : lien de paiement du solde ────────────────────────────────────
+function emailLienPaiementSoldeHtml(devis, montant, checkoutUrl) {
+  const acompte = parseFloat(devis.montant_acompte || 0).toFixed(2);
+  const total   = parseFloat(devis.montant_total   || 0).toFixed(2);
+
+  const lignes = [
+    ['Événement',           devis.type_evenement  || '—'],
+    ['Date',                devis.date_evenement  || '—'],
+    ['Heure',               devis.heure_evenement || '—'],
+    ['Lieu',                devis.lieu            || '—'],
+    ['Nombre de personnes', devis.nombre_personnes || '—'],
+    ['Acompte déjà réglé',  `${acompte} €`],
+    ['Total devis',         `${total} €`],
+    ['Solde restant',       `${parseFloat(montant).toFixed(2)} €`],
+  ].map(([k, v]) => `
+    <tr>
+      <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#3D2314;opacity:0.55;
+                 border-bottom:1px solid rgba(196,149,106,0.15);white-space:nowrap;">${k}</td>
+      <td style="padding:8px 12px;font-size:14px;color:#3D2314;
+                 border-bottom:1px solid rgba(196,149,106,0.15);">${v}</td>
+    </tr>`).join('');
+
+  return baseLayout(`
+    <h1 style="font-family:Georgia,serif;font-size:26px;color:#3D2314;margin:0 0 12px;font-weight:700;">
+      Réglez le solde de votre commande
+    </h1>
+    <p style="color:#3D2314;opacity:0.72;line-height:1.75;font-size:15px;margin:0 0 6px;">
+      Bonjour ${devis.nom},
+    </p>
+    <p style="color:#3D2314;opacity:0.72;line-height:1.75;font-size:15px;margin:0 0 24px;">
+      L'acompte a bien été encaissé. Il ne reste plus qu'à régler le solde de
+      <strong>${parseFloat(montant).toFixed(2)} €</strong> pour finaliser votre commande.
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;border-radius:10px;overflow:hidden;border:1px solid rgba(196,149,106,0.25);">
+      <thead><tr style="background:rgba(196,149,106,0.12);">
+        <th style="padding:10px 12px;font-size:11px;font-weight:600;text-transform:uppercase;
+                   letter-spacing:.06em;color:#3D2314;opacity:0.5;text-align:left;">Détail</th>
+        <th style="padding:10px 12px;font-size:11px;font-weight:600;text-transform:uppercase;
+                   letter-spacing:.06em;color:#3D2314;opacity:0.5;text-align:left;">Valeur</th>
+      </tr></thead>
+      <tbody>${lignes}</tbody>
+    </table>
+    ${ctaButton(checkoutUrl, `Payer le solde — ${parseFloat(montant).toFixed(2)} €`)}
+    <p style="color:#3D2314;opacity:0.35;font-size:11px;margin-top:12px;">
+      Ce lien est sécurisé et traité par Stripe. Vous n'avez pas demandé ce devis ? Ignorez cet e-mail.
+    </p>`);
+}
+
+// ─── Template : confirmation de paiement intégral ────────────────────────────
+function emailDevisSoldeConfirmeHtml(devis, montantPaye) {
+  const lignes = [
+    ['Événement',           devis.type_evenement  || '—'],
+    ['Date',                devis.date_evenement  || '—'],
+    ['Heure',               devis.heure_evenement || '—'],
+    ['Lieu',                devis.lieu            || '—'],
+    ['Nombre de personnes', devis.nombre_personnes || '—'],
+    ['Solde réglé',         `${parseFloat(montantPaye).toFixed(2)} €`],
+  ].map(([k, v]) => `
+    <tr>
+      <td style="padding:8px 12px;font-size:13px;font-weight:600;color:#3D2314;opacity:0.55;
+                 border-bottom:1px solid rgba(196,149,106,0.15);white-space:nowrap;">${k}</td>
+      <td style="padding:8px 12px;font-size:14px;color:#3D2314;
+                 border-bottom:1px solid rgba(196,149,106,0.15);">${v}</td>
+    </tr>`).join('');
+
+  return baseLayout(`
+    <h1 style="font-family:Georgia,serif;font-size:26px;color:#3D2314;margin:0 0 12px;font-weight:700;">
+      Commande intégralement réglée — Merci !
+    </h1>
+    <p style="color:#3D2314;opacity:0.72;line-height:1.75;font-size:15px;margin:0 0 6px;">
+      Bonjour ${devis.nom},
+    </p>
+    <p style="color:#3D2314;opacity:0.72;line-height:1.75;font-size:15px;margin:0 0 24px;">
+      Votre paiement du solde a bien été reçu. Votre commande est désormais
+      <strong>intégralement réglée</strong>. Voici le récapitulatif final :
+    </p>
+    <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:24px;border-radius:10px;overflow:hidden;border:1px solid rgba(196,149,106,0.25);">
+      <thead><tr style="background:rgba(196,149,106,0.12);">
+        <th style="padding:10px 12px;font-size:11px;font-weight:600;text-transform:uppercase;
+                   letter-spacing:.06em;color:#3D2314;opacity:0.5;text-align:left;">Détail</th>
+        <th style="padding:10px 12px;font-size:11px;font-weight:600;text-transform:uppercase;
+                   letter-spacing:.06em;color:#3D2314;opacity:0.5;text-align:left;">Valeur</th>
+      </tr></thead>
+      <tbody>${lignes}</tbody>
+    </table>
+    <p style="color:#3D2314;opacity:0.72;line-height:1.75;font-size:15px;margin:0 0 28px;">
+      Notre équipe vous contactera dans les <strong>48 heures</strong> pour finaliser les derniers détails
+      de votre événement. N'hésitez pas à nous contacter pour toute question.
+    </p>
+    <p style="color:#3D2314;opacity:0.45;font-size:13px;line-height:1.6;
+               border-top:1px solid rgba(196,149,106,0.2);padding-top:20px;margin:0;">
+      📞 Pour nous joindre, répondez simplement à cet e-mail.<br>
+      © ${YEAR} zrevents06 — Artisan Pâtissier
+    </p>`);
+}
+
+// ─── Template : newsletter ────────────────────────────────────────────────────
+function emailNewsletterHtml(sujet, htmlContent) {
+  return baseLayout(`
+    <h1 style="font-family:Georgia,serif;font-size:26px;color:#3D2314;margin:0 0 20px;font-weight:700;">
+      ${sujet}
+    </h1>
+    ${htmlContent}
+    <p style="color:#3D2314;opacity:0.35;font-size:11px;margin-top:24px;
+               border-top:1px solid rgba(196,149,106,0.2);padding-top:16px;">
+      Vous recevez cet e-mail car vous êtes client chez zrevents06.<br>
+      Pour vous désinscrire, répondez à cet e-mail.
+    </p>`);
+}
+
+module.exports = {
+  emailConfirmationHtml,
+  emailResetHtml,
+  emailLienPaiementHtml,
+  emailDevisConfirmeHtml,
+  emailLienPaiementSoldeHtml,
+  emailDevisSoldeConfirmeHtml,
+  emailNewsletterHtml,
+};
