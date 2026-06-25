@@ -784,6 +784,11 @@ function nlInsert(type) {
     hr:   '<hr style="border:none;border-top:1px solid rgba(196,149,106,0.3);margin:20px 0">',
     info: '<div style="background:#fef9f0;border-left:4px solid #C4956A;padding:14px 18px;border-radius:4px;margin:16px 0"><p style="margin:0;font-size:14px;color:#4a3728">ℹ Information importante</p></div>',
   };
+  const markers = { h2: '<h2 ', p: 'font-size:15px;color:#4a3728;line-height', btn: 'zrevents06.fr/devis', hr: '<hr style=', info: 'ℹ Information' };
+  const labels  = { h2: 'Titre', p: 'Paragraphe', btn: 'Bouton', hr: 'Séparateur', info: 'Bloc info' };
+  if (markers[type] && ta.value.includes(markers[type])) {
+    return toast(`${labels[type]} déjà présent.`, true);
+  }
   const pos = ta.selectionStart;
   ta.value = ta.value.slice(0, pos) + snippets[type] + ta.value.slice(pos);
   ta.selectionStart = ta.selectionEnd = pos + snippets[type].length;
