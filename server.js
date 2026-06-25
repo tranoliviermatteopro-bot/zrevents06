@@ -316,7 +316,7 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.static(path.join(__dirname, 'livraison'), { index: 'index_4.html' }));
+app.use(express.static(path.join(__dirname, 'livraison'), { index: 'index.html' }));
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
