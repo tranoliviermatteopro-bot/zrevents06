@@ -286,7 +286,7 @@ footer { color: rgba(253,248,242,0.2) !important; position: relative; z-index: 1
   </div>
 </main>
 
-<footer>© <script>document.write(new Date().getFullYear())</script> zrevents06 · Artisan Pâtissier</footer>
+<footer>© <script>document.write(new Date().getFullYear())</script> <span data-site-nom>zrevents06</span> · <span data-site-sous-titre>Artisan Pâtissier</span></footer>
 
 <script>
 const $ = id => document.getElementById(id);
@@ -425,5 +425,6 @@ $('form-connexion').addEventListener('submit', async e => {
 })();
 </script>
 
+  <script src="/settings-loader.js"></script>
 </body>
 </html>
