@@ -219,6 +219,7 @@
     <div class="nav-label">Communication</div>
     <div class="nav-item admin-only" onclick="goto('newsletter')"><span class="icon">📧</span> Newsletter</div>
     <div class="nav-label">Paramètres</div>
+    <div class="nav-item admin-only" onclick="goto('settings')"><span class="icon">⚙️</span> Paramètres du site</div>
     <div class="nav-item admin-only" onclick="goto('admins')"><span class="icon">👥</span> Équipe</div>
   </nav>
   <div class="sidebar-footer">
@@ -313,6 +314,30 @@
       <div class="table-card">
         <div class="table-header"><h2>Membres de l'équipe</h2></div>
         <div id="admins-table-wrap"><div class="empty">Chargement…</div></div>
+      </div>
+    </div>
+
+    <!-- ── Section : Paramètres du site ── -->
+    <div class="section" id="s-settings">
+      <div class="table-card" style="max-width:560px">
+        <div class="table-header"><h2>Paramètres du site</h2></div>
+        <div style="padding:24px;display:flex;flex-direction:column;gap:18px">
+          <div>
+            <label class="nl-label">Nom du site</label>
+            <input id="st-site-nom" class="nl-input" placeholder="zrevents06">
+          </div>
+          <div>
+            <label class="nl-label">Sous-titre</label>
+            <input id="st-site-sous-titre" class="nl-input" placeholder="Artisan Pâtissier">
+          </div>
+          <div>
+            <label class="nl-label">Email de contact public</label>
+            <input id="st-contact-email" class="nl-input" type="email" placeholder="contact@zrevents06.fr">
+          </div>
+          <button class="btn-sm primary" onclick="saveSettings()" style="padding:10px;font-size:14px">
+            💾 Enregistrer
+          </button>
+        </div>
       </div>
     </div>
 
@@ -427,10 +452,10 @@ async function init() {
 function goto(page) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.section').forEach(el => el.classList.remove('active'));
-  const navMap = { overview: 0, devis: 1, logs: 2, newsletter: 3, admins: 4 };
+  const navMap = { overview: 0, devis: 1, logs: 2, newsletter: 3, settings: 4, admins: 5 };
   document.querySelectorAll('.nav-item')[navMap[page]]?.classList.add('active');
   document.getElementById('s-' + page).classList.add('active');
-  const titles = { overview: 'Tableau de bord', devis: 'Gestion des devis', logs: 'Logs du site', newsletter: 'Newsletter', admins: 'Équipe' };
+  const titles = { overview: 'Tableau de bord', devis: 'Gestion des devis', logs: 'Logs du site', newsletter: 'Newsletter', settings: 'Paramètres du site', admins: 'Équipe' };
   document.getElementById('page-title').textContent = titles[page] || page;
   const actions = document.getElementById('topbar-actions');
   actions.innerHTML = '';
@@ -444,6 +469,8 @@ function goto(page) {
     loadAdmins();
   } else if (page === 'newsletter') {
     loadNewsletter();
+  } else if (page === 'settings') {
+    loadSettings();
   }
 }
 
@@ -683,6 +710,32 @@ async function removeAdmin(id, nom) {
   if (!confirm(`Supprimer ${nom} ?`)) return;
   await fetch(`/admin/api/admins/${id}`, { method: 'DELETE' });
   toast(`${nom} supprimé`); loadAdmins();
+}
+
+// ── Paramètres du site ──
+async function loadSettings() {
+  const r = await fetch('/admin/api/settings');
+  if (!r.ok) return;
+  const { settings } = await r.json();
+  document.getElementById('st-site-nom').value          = settings.site_nom          || '';
+  document.getElementById('st-site-sous-titre').value   = settings.site_sous_titre   || '';
+  document.getElementById('st-contact-email').value     = settings.contact_email     || '';
+}
+
+async function saveSettings() {
+  const body = {
+    site_nom:        document.getElementById('st-site-nom').value.trim(),
+    site_sous_titre: document.getElementById('st-site-sous-titre').value.trim(),
+    contact_email:   document.getElementById('st-contact-email').value.trim(),
+  };
+  if (!body.site_nom) return toast('Le nom du site est requis.', true);
+  const r = await fetch('/admin/api/settings', {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await r.json();
+  if (r.ok) toast('✅ Paramètres enregistrés');
+  else toast(data.error || 'Erreur sauvegarde.', true);
 }
 
 // ── Newsletter ──

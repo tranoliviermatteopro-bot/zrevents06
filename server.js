@@ -1003,6 +1003,14 @@ app.get('/admin/devis/refuser', async (req, res) => {
   } catch (err) { console.error('[DEVIS] refuser erreur:', err); }
 });
 
+// ─── Route publique : paramètres du site ─────────────────────────────────────
+app.get('/api/settings', async (req, res) => {
+  const rows = await db.all(
+    "SELECT key, value FROM site_settings WHERE key IN ('site_nom','site_sous_titre','contact_email')"
+  );
+  res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+});
+
 // ─── Gestionnaire d'erreurs global (évite les fuites de stack trace) ──────────
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, next) => {
@@ -1543,6 +1551,27 @@ app.post('/admin/api/newsletter', requireAdminAuth, requireAdminRole('admin'), a
   res.json({ success: true, sent, failed });
 });
 
+// ─── GET /admin/api/settings ─────────────────────────────────────────────────
+app.get('/admin/api/settings', requireAdminAuth, async (req, res) => {
+  const rows = await db.all('SELECT key, value FROM site_settings');
+  res.json({ settings: Object.fromEntries(rows.map(r => [r.key, r.value])) });
+});
+
+// ─── PUT /admin/api/settings ─────────────────────────────────────────────────
+app.put('/admin/api/settings', requireAdminAuth, requireAdminRole('admin'), async (req, res) => {
+  const allowed = ['site_nom', 'site_sous_titre', 'contact_email'];
+  for (const key of allowed) {
+    if (req.body[key] !== undefined) {
+      await db.run(
+        'INSERT INTO site_settings (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value',
+        key, String(req.body[key]).trim().slice(0, 200)
+      );
+    }
+  }
+  dbLog('info', `Paramètres site mis à jour`, { extra: { admin: req.admin.email } });
+  res.json({ success: true });
+});
+
 // ─── Fin PANNEAU D'ADMINISTRATION ─────────────────────────────────────────────
 
 const PORT = process.env.PORT || 3000;
@@ -1643,7 +1672,24 @@ async function startServer() {
       envoye_at     TIMESTAMPTZ DEFAULT NOW(),
       admin_email   TEXT
     );
+    CREATE TABLE IF NOT EXISTS site_settings (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL DEFAULT ''
+    );
   `);
+
+  // Valeurs par défaut des paramètres site
+  const SETTING_DEFAULTS = [
+    ['site_nom', 'zrevents06'],
+    ['site_sous_titre', 'Artisan Pâtissier'],
+    ['contact_email', ''],
+  ];
+  for (const [key, value] of SETTING_DEFAULTS) {
+    await pool.query(
+      'INSERT INTO zrevents.site_settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO NOTHING',
+      [key, value]
+    );
+  }
 
   // Colonnes ajoutées après la création initiale de la table devis
   await pool.query(`
